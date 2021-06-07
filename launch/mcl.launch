@@ -2,6 +2,7 @@
 
 <launch>
   <node pkg="mcl_gpu" type="mcl_gpu" name="mcl_gpu" output="screen">
-    <param name="which_rm" value="abcdcefe"/>
+    <param name="which_rm" value="rmgpu"/>
+    <param name="scan_topic" value="scan"/>
   </node>
 </launch>

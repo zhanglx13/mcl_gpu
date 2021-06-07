@@ -14,7 +14,14 @@ public:
     void scanCallback(const sensor_msgs::LaserScan& scan);
 
 protected:
-    std::string which_rm;
+    /* parameters */
+    std::string p_which_rm_;
+    std::string p_scan_topic_;
+    /* node handler */
+
+    ros::NodeHandle node_;
+
+    ros::Subscriber scan_sub_;
 };
 
 
