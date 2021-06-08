@@ -3,6 +3,7 @@
 
 #include "ros/ros.h"
 #include "sensor_msgs/LaserScan.h"
+#include "range_libc/RangeLib.h"
 
 
 class MCL
@@ -18,6 +19,8 @@ protected:
     /* parameters */
     std::string p_which_rm_;
     std::string p_scan_topic_;
+    float p_max_range_meters_;
+    int p_max_range_px_;
 
     /* sensor model constants */
     float p_z_short_;
@@ -30,6 +33,8 @@ protected:
     ros::NodeHandle node_;
 
     ros::Subscriber scan_sub_;
+
+    //ranges::RayMarchingGPU rm_rmgpu_;
 };
 
 

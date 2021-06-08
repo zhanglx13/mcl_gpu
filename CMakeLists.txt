@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0.2)
+cmake_minimum_required(VERSION 3.3)
 project(mcl_gpu)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
@@ -11,7 +11,17 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   sensor_msgs
   std_msgs
-)
+  nav_msgs
+  )
+
+## Option used to turn on and off CUDA support
+option(WITH_CUDA "Compile CUDA ray cast varients" ON)
+# set(CHUNK_SIZE 16384)
+# set(CHUNK_THREADS 256)
+set(CHUNK_SIZE 262144)
+set(CHUNK_THREADS 256)
+# set(CHUNK_SIZE 65536)
+# set(CHUNK_THREADS 256)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
@@ -116,9 +126,11 @@ catkin_package(
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 include_directories(
-# include
+  include
   ${catkin_INCLUDE_DIRS}
-)
+  )
+
+
 
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
@@ -148,22 +160,66 @@ include_directories(
 ## Specify libraries to link a library or executable target against
 # target_link_libraries(${PROJECT_NAME}_node
 #   ${catkin_LIBRARIES}
-# )
+# 
 
-add_executable(mcl_gpu
+##
+## Check https://cmake.org/cmake/help/latest/command/file.html
+##
+file(GLOB SRCS
   src/main.cpp
-  src/mcl.h
   src/mcl.cpp
+  src/RayMarchingGPU.cpp
   )
 
-target_link_libraries(mcl_gpu
-  ${catkin_LIBRARIES}
-  )
+if (WITH_CUDA)
+  add_definitions(-DUSE_CUDA=1)
+  add_definitions(-DCHUNK_SIZE=${CHUNK_SIZE})
+  add_definitions(-DNUM_THREADS=${CHUNK_THREADS})
 
-add_dependencies(mcl_gpu
-  ${${PROJECT_NAME}_EXPORTED_TARGETS}
-  ${catkin_EXPORTED_TARGETS}
-  )
+  ##
+  ## FindCUDA is deprecated since cmake 3.10
+  ## Check this link:
+  ## https://cmake.org/cmake/help/latest/module/FindCUDA.html
+  ##
+  ## The following usage is obtained from different sources online
+  ## - https://forums.developer.nvidia.com/t/cuda-in-ros-node-example-code/129130
+  ## - https://stackoverflow.com/questions/25748039/add-cuda-to-ros-package
+  ## - https://answers.ros.org/question/304782/compile-cuda-into-ros-code-in-tegra/
+  ##
+  find_package(CUDA REQUIRED)
+  SET(CUDA_NVCC_FLAGS "-arch=sm_61" CACHE STRING "nvcc flags" FORCE)
+  SET(CUDA_VERBOSE_BUILD ON CACHE BOOL "nvcc verbose" FORCE)
+  SET(LIB_TYPE STATIC)
+  CUDA_ADD_LIBRARY(cudaRMLib ${LIB_TYPE}
+    include/range_libc/kernels.cu
+    include/vendor/lodepng/lodepng.cpp)
+
+  add_executable(mcl_gpu ${SRCS})
+
+  target_link_libraries(mcl_gpu
+    ${catkin_LIBRARIES}
+    cudaRMLib
+    )
+
+  add_dependencies(mcl_gpu
+    ${${PROJECT_NAME}_EXPORTED_TARGETS}
+    ${catkin_EXPORTED_TARGETS}
+    cudaRMLib
+    )
+else()
+  add_definitions(-DUSE_CUDA=0)
+
+  add_executable(mcl_gpu ${SRCS})
+
+  target_link_libraries(mcl_gpu
+    ${catkin_LIBRARIES}
+    )
+
+  add_dependencies(mcl_gpu
+    ${${PROJECT_NAME}_EXPORTED_TARGETS}
+    ${catkin_EXPORTED_TARGETS}
+    )
+endif()
 
 #############
 ## Install ##
