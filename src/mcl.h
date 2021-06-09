@@ -9,7 +9,7 @@
 class MCL
 {
 public:
-    MCL();
+    MCL(ranges::OMap omap, float max_range);
     ~MCL();
 
     void scanCallback(const sensor_msgs::LaserScan& scan);
@@ -17,10 +17,15 @@ public:
 
 protected:
     /* parameters */
-    std::string p_which_rm_;
-    std::string p_scan_topic_;
+    int p_angle_step_;
+    int p_max_particles_;
+    int p_max_viz_particles_;
+    float p_inv_squash_factor_;
     float p_max_range_meters_;
-    int p_max_range_px_;
+    int p_theta_discretization_;
+    std::string p_which_rm_;
+    int p_publish_odom_;
+    int p_do_viz_;
 
     /* sensor model constants */
     float p_z_short_;
@@ -29,12 +34,22 @@ protected:
     float p_z_hit_;
     float p_sigma_hit_;
 
+    /* motion model constants */
+    float p_motion_dispersion_x_;
+    float p_motion_dispersion_y_;
+    float p_motion_dispersion_theta_;
+
+    std::string p_scan_topic_;
+    int p_max_range_px_;
+
+
+
     /* node handler */
     ros::NodeHandle node_;
 
     ros::Subscriber scan_sub_;
 
-    //ranges::RayMarchingGPU rm_rmgpu_;
+    ranges::RayMarchingGPU rmgpu_;
 };
 
 

@@ -168,7 +168,6 @@ include_directories(
 file(GLOB SRCS
   src/main.cpp
   src/mcl.cpp
-  src/RayMarchingGPU.cpp
   )
 
 if (WITH_CUDA)
