@@ -27,6 +27,26 @@ int main(int argc, char** argv)
         {
             ROS_INFO("Getting map from service: %s", map_service_client.getService().c_str());
             const nav_msgs::OccupancyGrid& map (srv_map.response.map);
+
+            // unsigned char *image = (unsigned char*)malloc(sizeof(char)*map.info.width*map.info.height);
+            // for (int r = 0; r < map.info.height; r ++)
+            // {
+            //     for (int c = 0; c < map.info.width; c++)
+            //     {
+            //         image[r * map.info.width + c + 0] = map.data[r*map.info.width + c];
+            //     }
+            // }
+            // for (int r = 500; r < 510; r++){
+            //     for (int c=80; c < 120; c++){
+            //         image[r * map.info.width + c + 0] = 0;
+            //         std::cout<<(int)map.data[r*map.info.width + c]<<"  ";
+            //     }
+            //     std::cout<<std::endl;
+            // }
+            // if (lodepng_encode_file("/home/lixun/reconstructed_map.png",image, map.info.width, map.info.height, LCT_GREY, 8))
+            // {
+            //     ROS_ERROR("lodepng_encode");
+            // }
             /*
              * For the occupancy grid map, width and height are the number of cells in x and y dimension
              * resolution is meters per cell

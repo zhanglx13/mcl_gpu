@@ -228,7 +228,11 @@ namespace ranges {
             for (int y = 0; y < height; ++y) {
                 for (int x = 0; x < width; ++x) {
                     int val = map.data[y*width + x];
-                    if (val > 10) grid[x][y] = true;
+                    /*
+                     * 0 - 100 is the probability of being occupied
+                     * -1: unknown
+                     */
+                    if (val > 10 || val == -1) grid[x][y] = true;
                     raw_grid[x][y] = val;
                 }
             }

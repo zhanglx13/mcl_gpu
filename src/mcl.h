@@ -13,7 +13,7 @@ public:
     ~MCL();
 
     void scanCallback(const sensor_msgs::LaserScan& scan);
-    void get_omap();
+    void get_omap(ranges::OMap omap);
     void precompute_sensor_model();
     void initialize_global();
 
@@ -55,6 +55,16 @@ protected:
     ros::Subscriber scan_sub_;
 
     ranges::RayMarchingGPU rmgpu_;
+
+    /* internal state used by the MCL algorithm */
+    bool lidar_initialized_;
+    bool odom_initialized_;
+    bool map_initialized_;
+
+    /* Information about the map */
+    int map_width_;
+    int map_height_;
+    char *permissible_region_;
 };
 
 
