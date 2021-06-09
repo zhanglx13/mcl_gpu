@@ -1,4 +1,5 @@
 #include "mcl.h"
+#define _USE_MATH_DEFINES
 
 //#include <nav_msgs/OccupancyGrid.h>
 //#include "nav_msgs/GetMap.h"
@@ -77,6 +78,59 @@ void MCL::get_omap(){}
 void MCL::precompute_sensor_model()
 {
     ROS_INFO("Precomputing sensor model ... ");
+    int table_width = p_max_range_px_ + 1;
+    size_t table_sz = sizeof(double) * table_width * table_width;
+    sensor_model_table_ = (double *)malloc(table_sz);
+
+    /* d is the computed range from RangeLibc */
+    for (int d = 0; d < table_width; d++)
+    {
+        double norm = 0.0;
+        /* r is the measured range from Lidar sensor */
+        for (int r = 0; r < table_width; r ++)
+        {
+            double prob = 0.0;
+            double z = r - d;
+            /* Known obstacle detection: Gaussian function */
+            prob += p_z_hit_ * exp(-(z*z)/(2.0*p_sigma_hit_*p_sigma_hit_)) / (p_sigma_hit_*sqrt(2.0*M_PI));
+            /* Unknown obstacle, i.e. measured range (r) is shorter than computed range (d) */
+            if (r < d)
+                prob += 2.0 * p_z_short_ * (d-r) / d;
+            /* missed measurement, i.e. r = max_range_px_ */
+            if (r == p_max_range_px_)
+                prob += p_z_max_;
+            /* random measurement, i.e. there is a change that r could be any value */
+            if ( r < p_max_range_px_)
+                prob += p_z_rand_ * 1.0 / p_max_range_px_;
+
+            norm += prob;
+            sensor_model_table_[r * table_width + d] = prob;
+        }
+        /* normalize */
+        for (int r = 0 ; r < table_width; r++)
+            sensor_model_table_[r * table_width + d] /= norm;
+    }
+    /* Upload the sensor mode to RayMarchingGPU */
+    rmgpu_.set_sensor_model(sensor_model_table_, table_width);
+    if (0)
+    {
+        ROS_INFO("Sensor mode done. Preview: ");
+        for (int row = 0 ; row < 10; row ++)
+        {
+            ROS_INFO("    %lf  %lf  %lf  %lf  %lf  %lf  %lf  %lf  %lf  %lf",
+                     sensor_model_table_[row*table_width + 0],
+                     sensor_model_table_[row*table_width + 1],
+                     sensor_model_table_[row*table_width + 2],
+                     sensor_model_table_[row*table_width + 3],
+                     sensor_model_table_[row*table_width + 4],
+                     sensor_model_table_[row*table_width + 5],
+                     sensor_model_table_[row*table_width + 6],
+                     sensor_model_table_[row*table_width + 7],
+                     sensor_model_table_[row*table_width + 8],
+                     sensor_model_table_[row*table_width + 9]
+                );
+        }
+    }
 }
 
 void MCL::initialize_global()

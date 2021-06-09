@@ -36,6 +36,9 @@ protected:
     float p_z_hit_;
     float p_sigma_hit_;
 
+    /* bacauese RayMarchingGPU::set_sensor_model expects table to be of type double */
+    double *sensor_model_table_;
+
     /* motion model constants */
     float p_motion_dispersion_x_;
     float p_motion_dispersion_y_;
