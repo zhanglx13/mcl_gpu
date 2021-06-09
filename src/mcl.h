@@ -14,6 +14,8 @@ public:
 
     void scanCallback(const sensor_msgs::LaserScan& scan);
     void get_omap();
+    void precompute_sensor_model();
+    void initialize_global();
 
 protected:
     /* parameters */

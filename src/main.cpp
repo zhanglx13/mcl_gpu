@@ -9,7 +9,7 @@ int main(int argc, char** argv)
 
 
     ros::NodeHandle node;
-    ros::NodeHandle private_nh;
+    ros::NodeHandle private_nh("~");
     float max_range;
     private_nh.param("max_range", max_range, 30.0f);
     ROS_INFO("Getting OMap object from map server!!");
