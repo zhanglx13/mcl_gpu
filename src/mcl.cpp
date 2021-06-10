@@ -1,8 +1,5 @@
 #include "mcl.h"
-#define _USE_MATH_DEFINES
-
-//#include <nav_msgs/OccupancyGrid.h>
-//#include "nav_msgs/GetMap.h"
+#define _USE_MATH_DEFINES // for pi
 
 
 MCL::MCL(ranges::OMap omap, float max_range): rmgpu_ (omap, max_range)
@@ -21,6 +18,7 @@ MCL::MCL(ranges::OMap omap, float max_range): rmgpu_ (omap, max_range)
     private_nh_.getParam("viz", p_do_viz_);
 
     private_nh_.param("scan_topic", p_scan_topic_, std::string("scan"));
+    private_nh_.param("odometry_topic", p_odom_topic_, std::string("odom"));
     //private_nh_.param("max_range", p_max_range_meters_, 30.0f);
 
     private_nh_.param("z_short", p_z_short_, 0.01f);
@@ -48,6 +46,7 @@ MCL::MCL(ranges::OMap omap, float max_range): rmgpu_ (omap, max_range)
     ROS_INFO("    Do viz:                %s", p_do_viz_==1?"Yes":"No");
 
     ROS_INFO("    Scan topic:            %s", p_scan_topic_.c_str());
+    ROS_INFO("    Odom topic:            %s", p_odom_topic_.c_str());
     ROS_INFO("    max_range_px:          %d", p_max_range_px_);
 
     lidar_initialized_ = 0;
@@ -62,12 +61,26 @@ MCL::MCL(ranges::OMap omap, float max_range): rmgpu_ (omap, max_range)
     particles = (float*)malloc(particles_sz);
     weights = (double*)malloc(sizeof(double)*p_max_particles_);
 
-    scan_sub_ = node_.subscribe(p_scan_topic_, 1, &MCL::scanCallback, this);
-
     /* initialize the state */
     get_omap(omap);
     precompute_sensor_model();
     initialize_global(omap);
+
+    /* these topics are for visualization */
+    pose_pub_      = node_.advertise<geometry_msgs::PoseStamped>("/pf/viz/inferred_pose", 1);
+    particle_pub_  = node_.advertise<geometry_msgs::PoseArray>("/pf/viz/particles", 1);
+    fake_scan_pub_ = node_.advertise<sensor_msgs::LaserScan>("/pf/viz/fake_scan", 1);
+    rect_pub_      = node_.advertise<geometry_msgs::PolygonStamped>("/pf/viz/poly1", 1);
+
+    if (p_publish_odom_)
+        odom_pub_ = node_.advertise<nav_msgs::Odometry>("/pf/pose/odom", 1);
+
+    scan_sub_ = node_.subscribe(p_scan_topic_, 1, &MCL::lidarCB, this);
+    odom_sub_ = node_.subscribe(p_odom_topic_, 1, &MCL::odomCB, this);
+    pose_sub_ = node_.subscribe("/initalpose", 1, &MCL::pose_initCB, this);
+    click_sub_ = node_.subscribe("/clicked_point", 1, &MCL::rand_initCB, this);
+
+    ROS_INFO("Finished initializing, waiting on messages ...");
 }
 
 MCL::~MCL()
@@ -76,14 +89,14 @@ MCL::~MCL()
     ROS_INFO("All done, bye yo!!");
 }
 
-void MCL::scanCallback(const sensor_msgs::LaserScan& scan)
-{
-    float angle_min = scan.angle_min;
-    float angle_max = scan.angle_max;
-    float num_rays = (angle_max - angle_min)/scan.angle_increment;
-    int ahead_idx = static_cast<int>(num_rays/2.0);
-    ROS_INFO("Received scan data, range ahead is %f",scan.ranges[ahead_idx]);
-}
+// void MCL::scanCallback(const sensor_msgs::LaserScan& scan)
+// {
+//     float angle_min = scan.angle_min;
+//     float angle_max = scan.angle_max;
+//     float num_rays = (angle_max - angle_min)/scan.angle_increment;
+//     int ahead_idx = static_cast<int>(num_rays/2.0);
+//     ROS_INFO("Received scan data, range ahead is %f",scan.ranges[ahead_idx]);
+// }
 
 void MCL::get_omap(ranges::OMap omap)
 {
@@ -201,9 +214,16 @@ void MCL::precompute_sensor_model()
     }
 }
 
+/*
+ * The following implementation is very slow, compared to the numpy version
+ * (7.9 s vs. 0.005 s)
+ *
+ * TODO: try to use Eigen library
+ */
 void MCL::initialize_global(ranges::OMap omap)
 {
     ROS_INFO("GLOBAL INITIALIZATION");
+    ros::WallTime start = ros::WallTime::now();
     /*
      * The following code generates random numbers between 0 and 1 uniformly
      * Check: https://www.delftstack.com/howto/cpp/cpp-random-number-between-0-and-1/
@@ -211,8 +231,10 @@ void MCL::initialize_global(ranges::OMap omap)
     std::random_device rd;
     std::default_random_engine eng(rd());
     std::uniform_real_distribution<float> distr(0,1);
+    ros::WallTime spot1 = ros::WallTime::now();
     /* First we shuffle the free_cell_ids */
     std::random_shuffle(free_cell_id_.begin(), free_cell_id_.end());
+    ros::WallTime spot2 = ros::WallTime::now();
     /* Then we use the first p_max_particles_ free_cell ids to initialize the particles */
     for (int p = 0 ; p < p_max_particles_; p++)
     {
@@ -235,7 +257,29 @@ void MCL::initialize_global(ranges::OMap omap)
         /* weights */
         weights[p] = 1.0 / p_max_particles_;
     }
+    ros::WallTime end = ros::WallTime::now();
+    ros::WallDuration elapsedTime = end - start;
+    ros::WallDuration rngTime = spot1 - start;
+    ros::WallDuration shuffleTime = spot2 - spot1;
+    ros::WallDuration loopTime = end - spot2;
+
+    ROS_INFO("    Total %lf, rng %lf, shuffle %lf, forloop %lf",
+             elapsedTime.toSec(), rngTime.toSec(), shuffleTime.toSec(), loopTime.toSec());
 }
+
+void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
+{
+}
+void MCL::odomCB(const nav_msgs::Odometry& msg)
+{
+}
+void MCL::pose_initCB(const geometry_msgs::PoseWithCovarianceStamped& msg)
+{
+}
+void MCL::rand_initCB(const geometry_msgs::PointStamped& msg)
+{
+}
+
 
 std::array<float, 3> utils::map_to_world(std::array<float, 3> p_in_map,ranges::OMap omap)
 {

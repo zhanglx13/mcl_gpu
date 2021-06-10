@@ -3,6 +3,13 @@
 
 #include "ros/ros.h"
 #include "sensor_msgs/LaserScan.h"
+#include "geometry_msgs/PoseStamped.h"
+#include "geometry_msgs/PointStamped.h"
+#include "geometry_msgs/PoseWithCovarianceStamped.h"
+#include "geometry_msgs/PoseArray.h"
+#include "geometry_msgs/PolygonStamped.h"
+#include "nav_msgs/Odometry.h"
+#include "tf/transform_broadcaster.h"
 #include "range_libc/RangeLib.h"
 
 
@@ -12,7 +19,12 @@ public:
     MCL(ranges::OMap omap, float max_range);
     ~MCL();
 
-    void scanCallback(const sensor_msgs::LaserScan& scan);
+    /* callback functions */
+    void lidarCB(const sensor_msgs::LaserScan& msg);
+    void odomCB(const nav_msgs::Odometry& msg);
+    void pose_initCB(const geometry_msgs::PoseWithCovarianceStamped& msg);
+    void rand_initCB(const geometry_msgs::PointStamped& msg);
+
     void get_omap(ranges::OMap omap);
     void precompute_sensor_model();
     void initialize_global(ranges::OMap omap);
@@ -45,14 +57,27 @@ protected:
     float p_motion_dispersion_theta_;
 
     std::string p_scan_topic_;
+    std::string p_odom_topic_;
     int p_max_range_px_;
-
-
 
     /* node handler */
     ros::NodeHandle node_;
 
+    /* Publishers for visualizations */
+    ros::Publisher pose_pub_;
+    ros::Publisher particle_pub_;
+    ros::Publisher fake_scan_pub_;
+    ros::Publisher rect_pub_;
+    ros::Publisher odom_pub_;
+
+    /* publisher for coordinates */
+    tf::TransformBroadcaster tf_pub_;
+
+    /* These topics are to receive data from the racecar */
     ros::Subscriber scan_sub_;
+    ros::Subscriber odom_sub_;
+    ros::Subscriber pose_sub_;
+    ros::Subscriber click_sub_;
 
     ranges::RayMarchingGPU rmgpu_;
 
@@ -64,7 +89,7 @@ protected:
     /* Information about the map */
     int map_width_;
     int map_height_;
-    char *permissible_region_; // deprecated
+    char *permissible_region_; // deprecated, do not use
     /*
      * free_cell_id_ store (x,y) of free cells of the map
      * Note that x corresponds to the column and y corresponds to the row.

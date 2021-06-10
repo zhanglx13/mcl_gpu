@@ -12,6 +12,8 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   std_msgs
   nav_msgs
+  geometry_msgs
+  tf
   )
 
 ## Option used to turn on and off CUDA support
@@ -160,7 +162,7 @@ include_directories(
 ## Specify libraries to link a library or executable target against
 # target_link_libraries(${PROJECT_NAME}_node
 #   ${catkin_LIBRARIES}
-# 
+#
 
 ##
 ## Check https://cmake.org/cmake/help/latest/command/file.html
