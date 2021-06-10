@@ -54,12 +54,20 @@ MCL::MCL(ranges::OMap omap, float max_range): rmgpu_ (omap, max_range)
     odom_initialized_ = 0;
     map_initialized_ = 0;
 
+    /*
+     * Initialize particles and weights
+     * Each particle has three components: x, y, and angle
+     */
+    size_t particles_sz = p_max_particles_*3*sizeof(float);
+    particles = (float*)malloc(particles_sz);
+    weights = (double*)malloc(sizeof(double)*p_max_particles_);
+
     scan_sub_ = node_.subscribe(p_scan_topic_, 1, &MCL::scanCallback, this);
 
     /* initialize the state */
     get_omap(omap);
     precompute_sensor_model();
-    initialize_global();
+    initialize_global(omap);
 }
 
 MCL::~MCL()
@@ -105,6 +113,10 @@ void MCL::get_omap(ranges::OMap omap)
         {
             if (!omap.isOccupied(col, row))
             {
+                std::array<int, 2> cell_id;
+                cell_id[0] = col;
+                cell_id[1] = row;
+                free_cell_id_.push_back(cell_id);
                 permissible_region_[row*map_width_ + col] = 1;
                 count ++;
             }
@@ -113,6 +125,7 @@ void MCL::get_omap(ranges::OMap omap)
         }
     }
     ROS_INFO("Process omap and count is %d, which is %f", count, count*1.0 / (map_width_*map_height_));
+    ROS_INFO("Number of free cells in the map: %ld", free_cell_id_.size());
     map_initialized_ = true;
 
     /*
@@ -188,7 +201,54 @@ void MCL::precompute_sensor_model()
     }
 }
 
-void MCL::initialize_global()
+void MCL::initialize_global(ranges::OMap omap)
 {
     ROS_INFO("GLOBAL INITIALIZATION");
+    /*
+     * The following code generates random numbers between 0 and 1 uniformly
+     * Check: https://www.delftstack.com/howto/cpp/cpp-random-number-between-0-and-1/
+     */
+    std::random_device rd;
+    std::default_random_engine eng(rd());
+    std::uniform_real_distribution<float> distr(0,1);
+    /* First we shuffle the free_cell_ids */
+    std::random_shuffle(free_cell_id_.begin(), free_cell_id_.end());
+    /* Then we use the first p_max_particles_ free_cell ids to initialize the particles */
+    for (int p = 0 ; p < p_max_particles_; p++)
+    {
+        /* make sure p is not beyond the free_cell_id_'s capacity */
+        if (p >= free_cell_id_.size())
+            p = p % free_cell_id_.size();
+        std::array<float, 3> p_in_map;
+        /* x */
+        p_in_map[0] = free_cell_id_.at(p).at(0);
+        /* y */
+        p_in_map[1] = free_cell_id_.at(p).at(1);
+        /* angle */
+        p_in_map[2] = distr(eng) * 2.0 * M_PI;
+        /* convert map coordinates to world coordinates */
+        std::array<float, 3> p_in_world = utils::map_to_world(p_in_map, omap);
+        /* now initialize the particles */
+        particles[p                       ] = p_in_world[0];
+        particles[p + p_max_particles_    ] = p_in_world[1];
+        particles[p + p_max_particles_ * 2] = p_in_world[2];
+        /* weights */
+        weights[p] = 1.0 / p_max_particles_;
+    }
+}
+
+std::array<float, 3> utils::map_to_world(std::array<float, 3> p_in_map,ranges::OMap omap)
+{
+    std::array<float, 3> p_in_world;
+
+    float scale = omap.world_scale;
+    float angle = omap.world_angle;
+    float ca = omap.world_cos_angle;
+    float sa = omap.world_sin_angle;
+    float x = p_in_map[0];
+    float y = p_in_map[1];
+    p_in_world[0] = (ca*x-sa*y)*scale+omap.world_origin_x;
+    p_in_world[1] = (sa*x+ca*y)*scale+omap.world_origin_y;
+    p_in_world[2] = p_in_map[2] + angle;
+    return p_in_world;
 }

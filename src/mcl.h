@@ -15,7 +15,7 @@ public:
     void scanCallback(const sensor_msgs::LaserScan& scan);
     void get_omap(ranges::OMap omap);
     void precompute_sensor_model();
-    void initialize_global();
+    void initialize_global(ranges::OMap omap);
 
 protected:
     /* parameters */
@@ -64,9 +64,21 @@ protected:
     /* Information about the map */
     int map_width_;
     int map_height_;
-    char *permissible_region_;
+    char *permissible_region_; // deprecated
+    /*
+     * free_cell_id_ store (x,y) of free cells of the map
+     * Note that x corresponds to the column and y corresponds to the row.
+     */
+    std::vector<std::array<int,2>> free_cell_id_;
+
+    /* particles */
+    double * weights;
+    float * particles;
 };
 
-
+namespace utils
+{
+    std::array<float, 3> map_to_world(std::array<float, 3> p_in_map, ranges::OMap omap);
+}
 
 #endif
