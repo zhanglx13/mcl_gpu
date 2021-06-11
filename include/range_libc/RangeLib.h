@@ -241,19 +241,23 @@ namespace ranges {
             world_origin_x = map.info.origin.position.x;
             world_origin_y = map.info.origin.position.y;
 
+            world_angle = -1.0f*quaternion_to_angle(map.info.origin.orientation);
+            world_sin_angle = sin(world_angle);
+            world_cos_angle = cos(world_angle);
+
+        }
+
+        float quaternion_to_angle(geometry_msgs::Quaternion orientation)
+        {
             /*
              * Convert quaternion to Euler angle
              * Check: https://answers.ros.org/question/11545/plotprint-rpy-from-quaternion/#17106
              */
             tf::Quaternion quat;
-            tf::quaternionMsgToTF(map.info.origin.orientation, quat);
+            tf::quaternionMsgToTF(orientation, quat);
             double roll, pitch, yaw;
             tf::Matrix3x3(quat).getRPY(roll,pitch,yaw);
-
-            world_angle = -1.0f*yaw;
-            world_sin_angle = sin(world_angle);
-            world_cos_angle = cos(world_angle);
-
+            return yaw;
         }
 
         /*
