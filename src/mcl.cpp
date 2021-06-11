@@ -2,7 +2,7 @@
 #define _USE_MATH_DEFINES // for pi
 
 
-MCL::MCL(ranges::OMap omap, float max_range): rmgpu_ (omap, max_range)
+MCL::MCL(ranges::OMap omap, float max_range): omap_(omap), rmgpu_ (omap, max_range)
 {
     ros::NodeHandle private_nh_("~");
     private_nh_.getParam("angle_step", p_angle_step_);
@@ -48,6 +48,7 @@ MCL::MCL(ranges::OMap omap, float max_range): rmgpu_ (omap, max_range)
     ROS_INFO("    Scan topic:            %s", p_scan_topic_.c_str());
     ROS_INFO("    Odom topic:            %s", p_odom_topic_.c_str());
     ROS_INFO("    max_range_px:          %d", p_max_range_px_);
+    ROS_INFO("    last_pose size is %ld", last_pose_.size());
 
     lidar_initialized_ = 0;
     odom_initialized_ = 0;
@@ -62,9 +63,9 @@ MCL::MCL(ranges::OMap omap, float max_range): rmgpu_ (omap, max_range)
     weights = (double*)malloc(sizeof(double)*p_max_particles_);
 
     /* initialize the state */
-    get_omap(omap);
+    get_omap();
     precompute_sensor_model();
-    initialize_global(omap);
+    initialize_global();
 
     /* these topics are for visualization */
     pose_pub_      = node_.advertise<geometry_msgs::PoseStamped>("/pf/viz/inferred_pose", 1);
@@ -77,7 +78,7 @@ MCL::MCL(ranges::OMap omap, float max_range): rmgpu_ (omap, max_range)
 
     scan_sub_ = node_.subscribe(p_scan_topic_, 1, &MCL::lidarCB, this);
     odom_sub_ = node_.subscribe(p_odom_topic_, 1, &MCL::odomCB, this);
-    pose_sub_ = node_.subscribe("/initalpose", 1, &MCL::pose_initCB, this);
+    pose_sub_ = node_.subscribe("/initialpose", 1, &MCL::pose_initCB, this);
     click_sub_ = node_.subscribe("/clicked_point", 1, &MCL::rand_initCB, this);
 
     ROS_INFO("Finished initializing, waiting on messages ...");
@@ -98,7 +99,7 @@ MCL::~MCL()
 //     ROS_INFO("Received scan data, range ahead is %f",scan.ranges[ahead_idx]);
 // }
 
-void MCL::get_omap(ranges::OMap omap)
+void MCL::get_omap()
 {
     /*
      * The omap was obtained from the map_server in main.cpp.
@@ -116,15 +117,15 @@ void MCL::get_omap(ranges::OMap omap)
      * When the occupancy map only contains 0, 100, and -1, the above two methods
      * are the same
      */
-    map_height_ = omap.height;
-    map_width_ = omap.width;
+    map_height_ = omap_.height;
+    map_width_ = omap_.width;
     permissible_region_ = (char*) malloc(sizeof(char)*map_width_*map_height_);
     int count = 0;
     for (int row = 0; row < map_height_; row++)
     {
         for (int col = 0; col < map_width_; col++)
         {
-            if (!omap.isOccupied(col, row))
+            if (!omap_.isOccupied(col, row))
             {
                 std::array<int, 2> cell_id;
                 cell_id[0] = col;
@@ -144,7 +145,7 @@ void MCL::get_omap(ranges::OMap omap)
     /*
      * The following code is used to encode the map as a png image for visualization
      */
-    if (false){
+    if (true){
         unsigned char *image = (unsigned char*)malloc(sizeof(char)*map_height_*map_width_);
         for (int r = 0; r < map_height_; r ++)
             for (int c = 0; c < map_width_; c++)
@@ -220,7 +221,7 @@ void MCL::precompute_sensor_model()
  *
  * TODO: try to use Eigen library
  */
-void MCL::initialize_global(ranges::OMap omap)
+void MCL::initialize_global()
 {
     ROS_INFO("GLOBAL INITIALIZATION");
     ros::WallTime start = ros::WallTime::now();
@@ -249,7 +250,7 @@ void MCL::initialize_global(ranges::OMap omap)
         /* angle */
         p_in_map[2] = distr(eng) * 2.0 * M_PI;
         /* convert map coordinates to world coordinates */
-        std::array<float, 3> p_in_world = utils::map_to_world(p_in_map, omap);
+        std::array<float, 3> p_in_world = utils::map_to_world(p_in_map, omap_);
         /* now initialize the particles */
         particles[p                       ] = p_in_world[0];
         particles[p + p_max_particles_    ] = p_in_world[1];
@@ -269,15 +270,61 @@ void MCL::initialize_global(ranges::OMap omap)
 
 void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
 {
+    float amin = msg.angle_min;
+    float amax = msg.angle_max;
+    float inc  = msg.angle_increment;
+    int num_ranges = (amax - amin) / inc + 1;
+    int num_ranges_downsampled = num_ranges / p_angle_step_;
+    if (!lidar_initialized_)
+    {
+        /* When receiving the first lidar data, do the following */
+        /* 1. allocate space for num_ranges_downsampled_ */
+        downsampled_ranges_ = (float *) malloc(sizeof(float) * num_ranges_downsampled);
+    }
+    /* down sample the range */
+    for (int i = 0; i < num_ranges; i += p_angle_step_)
+        downsampled_ranges_[i/p_angle_step_] = msg.ranges[i];
+    lidar_initialized_ = 1;
 }
+
 void MCL::odomCB(const nav_msgs::Odometry& msg)
 {
+    std::array<float, 3> pose;
+    pose[0] = msg.pose.pose.position.x;
+    pose[1] = msg.pose.pose.position.y;
+    pose[2] = omap_.quaternion_to_angle(msg.pose.pose.orientation);
+    if (odom_initialized_ == 1)
+    {
+        float c = cos(-last_pose_[2]);
+        float s = sin(-last_pose_[2]);
+        float dx = pose[0] - last_pose_[0];
+        float dy = pose[1] - last_pose_[1];
+        odometry_delta_[0] = c*dx-s*dy;
+        odometry_delta_[1] = s*dx+c*dy;
+        odometry_delta_[2] = pose[2] - last_pose_[2];
+        odom_initialized_ = 2;
+    }
+    last_pose_ = pose;
+    last_stamp_ = msg.header.stamp;
+    odom_initialized_ = 1;
+
+    /* this topic is slower than lidar, so update every time we receive a message */
+    update();
 }
+
 void MCL::pose_initCB(const geometry_msgs::PoseWithCovarianceStamped& msg)
 {
+    ROS_INFO("initial pose set");
 }
 void MCL::rand_initCB(const geometry_msgs::PointStamped& msg)
 {
+    ROS_INFO("clicked point set");
+    initialize_global();
+}
+
+void MCL::update()
+{
+
 }
 
 

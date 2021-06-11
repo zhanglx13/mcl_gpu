@@ -2,6 +2,7 @@
 #define MCL_H_
 
 #include "ros/ros.h"
+
 #include "sensor_msgs/LaserScan.h"
 #include "geometry_msgs/PoseStamped.h"
 #include "geometry_msgs/PointStamped.h"
@@ -10,6 +11,7 @@
 #include "geometry_msgs/PolygonStamped.h"
 #include "nav_msgs/Odometry.h"
 #include "tf/transform_broadcaster.h"
+
 #include "range_libc/RangeLib.h"
 
 
@@ -25,9 +27,11 @@ public:
     void pose_initCB(const geometry_msgs::PoseWithCovarianceStamped& msg);
     void rand_initCB(const geometry_msgs::PointStamped& msg);
 
-    void get_omap(ranges::OMap omap);
+    void get_omap();
     void precompute_sensor_model();
-    void initialize_global(ranges::OMap omap);
+    void initialize_global();
+
+    void update();
 
 protected:
     /* parameters */
@@ -83,12 +87,33 @@ protected:
 
     /* internal state used by the MCL algorithm */
     bool lidar_initialized_;
+    /*
+     * 0: not receive any odom message yet
+     * 1: received the first odom message
+     * 2: odometry_delta_ is initialized
+     */
     bool odom_initialized_;
     bool map_initialized_;
+
+    /*
+     * Note that this is different from geometry_msgs::Pose in the way that
+     * last_pose_[2] is the angle but geometry_msgs::Pose[2] is queternion.
+     */
+    std::array<float, 3> last_pose_;
+    /*
+     * This is the difference between the newly received and the last odometry
+     * in the car frame. There needs to be a conversion between the odom frame
+     * to the car frame.
+     * Note that the rotation is expressed as angle instead of quaternion
+     */
+    std::array<float, 3> odometry_delta_;
+    ros::Time last_stamp_;
+
 
     /* Information about the map */
     int map_width_;
     int map_height_;
+    ranges::OMap omap_;
     char *permissible_region_; // deprecated, do not use
     /*
      * free_cell_id_ store (x,y) of free cells of the map
@@ -99,6 +124,13 @@ protected:
     /* particles */
     double * weights;
     float * particles;
+
+    /* containers for range data */
+    float *downsampled_ranges_;
+    float *downsampled_angles_;
+    float *viz_queries_;
+    float *viz_ranges_;
+
 };
 
 namespace utils
