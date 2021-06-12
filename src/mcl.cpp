@@ -95,15 +95,6 @@ MCL::~MCL()
     ROS_INFO("All done, bye yo!!");
 }
 
-// void MCL::scanCallback(const sensor_msgs::LaserScan& scan)
-// {
-//     float angle_min = scan.angle_min;
-//     float angle_max = scan.angle_max;
-//     float num_rays = (angle_max - angle_min)/scan.angle_increment;
-//     int ahead_idx = static_cast<int>(num_rays/2.0);
-//     ROS_INFO("Received scan data, range ahead is %f",scan.ranges[ahead_idx]);
-// }
-
 void MCL::get_omap()
 {
     /*
@@ -150,7 +141,7 @@ void MCL::get_omap()
     /*
      * The following code is used to encode the map as a png image for visualization
      */
-    if (true){
+    if (false){
         unsigned char *image = (unsigned char*)malloc(sizeof(char)*map_height_*map_width_);
         for (int r = 0; r < map_height_; r ++)
             for (int c = 0; c < map_width_; c++)
@@ -199,6 +190,7 @@ void MCL::precompute_sensor_model()
     }
     /* Upload the sensor mode to RayMarchingGPU */
     rmgpu_.set_sensor_model(sensor_model_table_, table_width);
+    /* preview the sensor table */
     if (0)
     {
         ROS_INFO("Sensor mode done. Preview: ");
@@ -365,11 +357,12 @@ void MCL::update()
 void MCL::MCL_cpu()
 {
     ROS_INFO("Calling MCL_cpu()");
-    //ROS_INFO("Printing particles before resampling");
+    ROS_INFO("Printing particles before resampling");
+    print_particles(p_max_particles_);
     //utils::print_particles(particles_x_, particles_y_, particles_angle_, weights_);
 
     /*
-     * Resampling using discrete distribution
+     * step 1: Resampling using discrete distribution
      */
     std::vector<float> particles_x;
     std::vector<float> particles_y;
@@ -397,20 +390,82 @@ void MCL::MCL_cpu()
      * Note that the lambda need to capture this to access member variables of MCL
      * check: https://riptutorial.com/cplusplus/example/2461/class-lambdas-and-capture-of-this
      */
-    std::transform(indices.begin(), indices.end(), back_inserter(particles_x),
+    std::transform(indices.begin(), indices.end(), particles_x.begin(),
                    [this](int index) {return particles_x_[index];});
-    std::transform(indices.begin(), indices.end(), back_inserter(particles_y),
+    std::transform(indices.begin(), indices.end(), particles_y.begin(),
                    [this](int index) {return particles_y_[index];});
-    std::transform(indices.begin(), indices.end(), back_inserter(particles_angle),
+    std::transform(indices.begin(), indices.end(), particles_angle.begin(),
                    [this](int index) {return particles_angle_[index];});
     //ROS_INFO("Printing particles after resampling");
     //utils::print_particles(particles_x, particles_y, particles_angle, weights_);
+    particles_x_ = particles_x;
+    particles_y_ = particles_y;
+    particles_angle_ = particles_angle;
+    ROS_INFO("Printing particles after resampling");
+    print_particles(p_max_particles_);
+    motion_model();
 
 }
 
 void MCL::MCL_gpu(){}
 
 void MCL::MCL_adaptive(){}
+
+void MCL::motion_model()
+{
+    /* rotate the action into the coordinate space of each particle */
+    std::vector<float> cosines;
+    std::vector<float> sines;
+    cosines.reserve(p_max_particles_);
+    sines.reserve(p_max_particles_);
+    std::transform(particles_angle_.begin(), particles_angle_.end(), cosines.begin(),
+                   [](float theta) {return cos(theta);});
+    std::transform(particles_angle_.begin(), particles_angle_.end(), sines.begin(),
+                   [](float theta) {return sin(theta);});
+
+    std::vector<float> local_deltas_x;
+    std::vector<float> local_deltas_y;
+    local_deltas_x.reserve(p_max_particles_);
+    local_deltas_y.reserve(p_max_particles_);
+    std::transform(cosines.begin(), cosines.end(),
+                   sines.begin(),
+                   local_deltas_x.begin(),
+                   [this](float c, float s)
+                       {return c*odometry_delta_[0]-s*odometry_delta_[1];});
+    std::transform(cosines.begin(), cosines.end(),
+                   sines.begin(),
+                   local_deltas_y.begin(),
+                   [this](float c, float s)
+                       {return s*odometry_delta_[0]+c*odometry_delta_[1];});
+    /* Add the local delta to each particle */
+    unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+    std::transform(particles_x_.begin(), particles_x_.end(),
+                   local_deltas_x.begin(),
+                   particles_x_.begin(),
+                   [distribution = std::normal_distribution<float>(0.0, p_motion_dispersion_x_),
+                    generator = std::default_random_engine(seed)]
+                   (float x, float delta) mutable
+                       {return x + delta + distribution(generator);});
+    std::transform(particles_y_.begin(), particles_y_.end(),
+                   local_deltas_y.begin(),
+                   particles_y_.begin(),
+                   [distribution = std::normal_distribution<float>(0.0, p_motion_dispersion_y_),
+                    generator = std::default_random_engine(seed)]
+                   (float y, float delta) mutable
+                       {return y + delta + distribution(generator);});
+    std::transform(particles_angle_.begin(), particles_angle_.end(),
+                   particles_angle_.begin(),
+                   [distribution = std::normal_distribution<float>(0.0, p_motion_dispersion_theta_),
+                    generator = std::default_random_engine(seed), this]
+                   (float angle) mutable
+                       {return angle + odometry_delta_[2] + distribution(generator);});
+}
+
+void MCL::print_particles(int n)
+{
+    for (int i = 0; i < n; i ++)
+        printf("%3d:  %f  %f  %f\t(%lf)\n", i, particles_x_[i], particles_y_[i], particles_angle_[i], weights_[i]);
+}
 
 
 

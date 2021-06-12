@@ -37,6 +37,9 @@ public:
     void MCL_gpu();
     void MCL_adaptive();
 
+    void motion_model();
+    void print_particles(int n);
+
 protected:
     /* parameters */
     int p_angle_step_;
