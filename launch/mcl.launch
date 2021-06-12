@@ -5,17 +5,24 @@
   <!-- For the mcl_gpu package to work, a map needs to be loaded first -->
   <include file="$(find mcl_gpu)/launch/map_server.launch"/>
 
-  <!-- argument -->
+  <!-- arguments
+       which_impl: choose the implementation of the MCL algorithm
+                   - cpu: sequential implementation on CPU
+                   - gpu: CUDA implementation on GPU
+                   - adaptive: heterogeneous implementation on CPU + GPU
+  -->
   <arg name="scan_topic" default="/scan"/>
   <!-- <arg name="odometry_topic" default="/vesc/odom"/> -->
   <arg name="odometry_topic" default="/odom"/>
   <arg name="angle_step" default="18"/>
-  <arg name="max_particles" default="4000"/>
+  <arg name="max_particles" default="10"/>
   <arg name="squash_factor" default="2.2"/>
   <arg name="viz" default="1"/>
+  <arg name="which_impl" default="cpu"/>
 
   <node pkg="mcl_gpu" type="mcl_gpu" name="mcl_gpu" output="screen">
     <param name="which_rm" value="rmgpu"/>
+    <param name="which_impl" value="$(arg which_impl)"/>
     <param name="scan_topic" value="$(arg scan_topic)"/>
     <param name="odometry_topic" value="$(arg odometry_topic)"/>
     <!-- range data is downsampled by this factor -->

@@ -32,6 +32,10 @@ public:
     void initialize_global();
 
     void update();
+    /* difference implementations of MCL algorithm */
+    void MCL_cpu();
+    void MCL_gpu();
+    void MCL_adaptive();
 
 protected:
     /* parameters */
@@ -42,6 +46,7 @@ protected:
     float p_max_range_meters_;
     int p_theta_discretization_;
     std::string p_which_rm_;
+    std::string p_which_impl_;
     int p_publish_odom_;
     int p_do_viz_;
 
@@ -100,6 +105,7 @@ protected:
      * last_pose_[2] is the angle but geometry_msgs::Pose[2] is queternion.
      */
     std::array<float, 3> last_pose_;
+    std::array<float, 3> inferred_pose_;
     /*
      * This is the difference between the newly received and the last odometry
      * in the car frame. There needs to be a conversion between the odom frame
@@ -122,20 +128,24 @@ protected:
     std::vector<std::array<int,2>> free_cell_id_;
 
     /* particles */
-    double * weights;
-    float * particles;
+    std::vector<double> weights_;
+    float * particles_;
+    std::vector<float> particles_x_;
+    std::vector<float> particles_y_;
+    std::vector<float> particles_angle_;
 
     /* containers for range data */
-    float *downsampled_ranges_;
-    float *downsampled_angles_;
-    float *viz_queries_;
-    float *viz_ranges_;
+    std::vector<float> downsampled_ranges_;
+    std::vector<float> downsampled_angles_;
+    std::vector<float> viz_queries_;
+    std::vector<float> viz_ranges_;
 
 };
 
 namespace utils
 {
     std::array<float, 3> map_to_world(std::array<float, 3> p_in_map, ranges::OMap omap);
+    void print_particles(std::vector<float> x, std::vector<float> y, std::vector<float> angle, std::vector<double> weights);
 }
 
 #endif

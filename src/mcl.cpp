@@ -14,6 +14,7 @@ MCL::MCL(ranges::OMap omap, float max_range): omap_(omap), rmgpu_ (omap, max_ran
     p_max_range_meters_ = max_range;
     private_nh_.getParam("theta_discretization", p_theta_discretization_);
     private_nh_.param("which_rm", p_which_rm_, std::string("rmgpu"));
+    private_nh_.param("which_impl", p_which_impl_, std::string("cpu"));
     private_nh_.param("publish_odom", p_publish_odom_, 1);
     private_nh_.getParam("viz", p_do_viz_);
 
@@ -48,7 +49,8 @@ MCL::MCL(ranges::OMap omap, float max_range): omap_(omap), rmgpu_ (omap, max_ran
     ROS_INFO("    Scan topic:            %s", p_scan_topic_.c_str());
     ROS_INFO("    Odom topic:            %s", p_odom_topic_.c_str());
     ROS_INFO("    max_range_px:          %d", p_max_range_px_);
-    ROS_INFO("    last_pose size is %ld", last_pose_.size());
+
+    ROS_INFO("    which_impl:            %s", p_which_impl_.c_str());
 
     lidar_initialized_ = 0;
     odom_initialized_ = 0;
@@ -59,8 +61,11 @@ MCL::MCL(ranges::OMap omap, float max_range): omap_(omap), rmgpu_ (omap, max_ran
      * Each particle has three components: x, y, and angle
      */
     size_t particles_sz = p_max_particles_*3*sizeof(float);
-    particles = (float*)malloc(particles_sz);
-    weights = (double*)malloc(sizeof(double)*p_max_particles_);
+    particles_ = (float*)malloc(particles_sz);
+    weights_.resize(p_max_particles_);
+    particles_x_.resize(p_max_particles_);
+    particles_y_.resize(p_max_particles_);
+    particles_angle_.resize(p_max_particles_);
 
     /* initialize the state */
     get_omap();
@@ -229,11 +234,12 @@ void MCL::initialize_global()
      * The following code generates random numbers between 0 and 1 uniformly
      * Check: https://www.delftstack.com/howto/cpp/cpp-random-number-between-0-and-1/
      */
-    std::random_device rd;
-    std::default_random_engine eng(rd());
+    unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+    std::default_random_engine eng(seed);
     std::uniform_real_distribution<float> distr(0,1);
     ros::WallTime spot1 = ros::WallTime::now();
     /* First we shuffle the free_cell_ids */
+    std::srand(std::time(0));
     std::random_shuffle(free_cell_id_.begin(), free_cell_id_.end());
     ros::WallTime spot2 = ros::WallTime::now();
     /* Then we use the first p_max_particles_ free_cell ids to initialize the particles */
@@ -252,11 +258,11 @@ void MCL::initialize_global()
         /* convert map coordinates to world coordinates */
         std::array<float, 3> p_in_world = utils::map_to_world(p_in_map, omap_);
         /* now initialize the particles */
-        particles[p                       ] = p_in_world[0];
-        particles[p + p_max_particles_    ] = p_in_world[1];
-        particles[p + p_max_particles_ * 2] = p_in_world[2];
+        particles_x_[p] = p_in_world[0];
+        particles_y_[p] = p_in_world[1];
+        particles_angle_[p] = p_in_world[2];
         /* weights */
-        weights[p] = 1.0 / p_max_particles_;
+        weights_[p] = 1.0 / p_max_particles_;
     }
     ros::WallTime end = ros::WallTime::now();
     ros::WallDuration elapsedTime = end - start;
@@ -266,6 +272,12 @@ void MCL::initialize_global()
 
     ROS_INFO("    Total %lf, rng %lf, shuffle %lf, forloop %lf",
              elapsedTime.toSec(), rngTime.toSec(), shuffleTime.toSec(), loopTime.toSec());
+
+    /*
+     * TESTING
+     */
+    ROS_INFO("TESTING THE MCL_cpu() FUNCTION ... ");
+    MCL_cpu();
 }
 
 void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
@@ -279,7 +291,8 @@ void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
     {
         /* When receiving the first lidar data, do the following */
         /* 1. allocate space for num_ranges_downsampled_ */
-        downsampled_ranges_ = (float *) malloc(sizeof(float) * num_ranges_downsampled);
+        //downsampled_ranges_ = (float *) malloc(sizeof(float) * num_ranges_downsampled);
+        downsampled_ranges_.resize(num_ranges_downsampled);
     }
     /* down sample the range */
     for (int i = 0; i < num_ranges; i += p_angle_step_)
@@ -320,12 +333,85 @@ void MCL::rand_initCB(const geometry_msgs::PointStamped& msg)
 {
     ROS_INFO("clicked point set");
     initialize_global();
+
 }
 
 void MCL::update()
 {
+    if (lidar_initialized_ && odom_initialized_ && map_initialized_)
+    {
+        ros::Time t1 = ros::Time::now();
+        /*
+         * one step of MCL algorithm:
+         *   1. resampling
+         *   2. apply motion model
+         *   3. apply sensor model
+         *   4. normalize particle weights
+         */
+        if (!p_which_impl_.compare("cpu"))
+            MCL_cpu();
+        else if (!p_which_impl_.compare("gpu"))
+            MCL_gpu();
+        else if (!p_which_impl_.compare("adaptive"))
+            MCL_adaptive();
+        else
+            ROS_ERROR("The chosen method is not implemented yet");
+
+        //inferred_pose_ = expected_pose();
+
+    }
+}
+
+void MCL::MCL_cpu()
+{
+    ROS_INFO("Calling MCL_cpu()");
+    //ROS_INFO("Printing particles before resampling");
+    //utils::print_particles(particles_x_, particles_y_, particles_angle_, weights_);
+
+    /*
+     * Resampling using discrete distribution
+     */
+    std::vector<float> particles_x;
+    std::vector<float> particles_y;
+    std::vector<float> particles_angle;
+    particles_x.reserve(p_max_particles_);
+    particles_y.reserve(p_max_particles_);
+    particles_angle.reserve(p_max_particles_);
+    /*
+     * https://stackoverflow.com/questions/42926209/equivalent-function-to-numpy-random-choice-in-c
+     * Use weights_ to construct a distribution
+     */
+    std::discrete_distribution<int> distribution(weights_.begin(), weights_.end());
+    /* vector used to hold indices of selected particles */
+    std::vector<int> indices;
+    indices.reserve(p_max_particles_);
+    /* construct a trivial random generator engine from a time-based seed: */
+    unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+    /* use a generator lambda to draw random indices based on distribution */
+    std::generate_n(back_inserter(indices), p_max_particles_,
+                    [distribution = std::move(distribution),
+                     generator = std::default_random_engine(seed)
+                        ]() mutable {return distribution(generator);});
+    /*
+     * Use indices to select particles
+     * Note that the lambda need to capture this to access member variables of MCL
+     * check: https://riptutorial.com/cplusplus/example/2461/class-lambdas-and-capture-of-this
+     */
+    std::transform(indices.begin(), indices.end(), back_inserter(particles_x),
+                   [this](int index) {return particles_x_[index];});
+    std::transform(indices.begin(), indices.end(), back_inserter(particles_y),
+                   [this](int index) {return particles_y_[index];});
+    std::transform(indices.begin(), indices.end(), back_inserter(particles_angle),
+                   [this](int index) {return particles_angle_[index];});
+    //ROS_INFO("Printing particles after resampling");
+    //utils::print_particles(particles_x, particles_y, particles_angle, weights_);
 
 }
+
+void MCL::MCL_gpu(){}
+
+void MCL::MCL_adaptive(){}
+
 
 
 std::array<float, 3> utils::map_to_world(std::array<float, 3> p_in_map,ranges::OMap omap)
@@ -342,4 +428,12 @@ std::array<float, 3> utils::map_to_world(std::array<float, 3> p_in_map,ranges::O
     p_in_world[1] = (sa*x+ca*y)*scale+omap.world_origin_y;
     p_in_world[2] = p_in_map[2] + angle;
     return p_in_world;
+}
+
+void utils::print_particles(std::vector<float> x, std::vector<float> y, std::vector<float> angle, std::vector<double> weights)
+{
+    for (int i = 0; i < x.size(); i++)
+    {
+        printf("%3d:  %f  %f  %f  (%lf)\n", i, x[i], y[i], angle[i], weights[i]);
+    }
 }
