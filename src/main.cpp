@@ -12,9 +12,11 @@ int main(int argc, char** argv)
     ros::NodeHandle private_nh("~");
     float max_range;
     /*
-     * max_range is the maximum range that Lidar can measure. This is used to compute the
-     * width of the sensor_model_table. We only need to compute the sensor model for r and
-     * d that are within the max_range/resolution, which is p_max_range_px.
+      @note
+     * max_range is the maximum range in meters that Lidar can measure.
+     * max_range_px is the maximum range in the map, which is calculated as
+     * max_range/omap.world_scale
+     * max_range_px + 1 will be used as the width of the sensor table.
      */
     private_nh.param("max_range", max_range, 30.0f);
     ROS_INFO("Getting OMap object from map server!!");
@@ -48,6 +50,7 @@ int main(int argc, char** argv)
             //     ROS_ERROR("lodepng_encode");
             // }
             /*
+              @note
              * For the occupancy grid map, width and height are the number of cells in x and y dimension
              * resolution is meters per cell
              * origin is the pose of cell[0][0] in world frame. Sometimes the map can be rotated.
@@ -57,7 +60,13 @@ int main(int argc, char** argv)
             ROS_INFO("    height:     %d", map.info.height);
             ranges::OMap omap = ranges::OMap(map);
 
-            MCL mcl(omap, max_range);
+            /*
+              @note
+             * The second argument (max_range/omap.world_scale) passed to the
+             * constructor of MCL will be used to initialize an object of
+             * RayMarchingGPU. It is supposed to be the max range in the map.
+             */
+            MCL mcl(omap, max_range/omap.world_scale);
             ros::spin();
         }
         else

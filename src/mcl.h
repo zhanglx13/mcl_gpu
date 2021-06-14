@@ -38,6 +38,7 @@ public:
     void MCL_adaptive();
 
     void motion_model();
+    void sensor_model();
     void print_particles(int n);
 
 protected:
@@ -70,7 +71,6 @@ protected:
 
     std::string p_scan_topic_;
     std::string p_odom_topic_;
-    int p_max_range_px_;
 
     /* node handler */
     ros::NodeHandle node_;
@@ -120,9 +120,10 @@ protected:
 
 
     /* Information about the map */
-    int map_width_;
-    int map_height_;
+    int map_width_; // deprecated
+    int map_height_; // deprecated
     ranges::OMap omap_;
+    int p_max_range_px_;
     char *permissible_region_; // deprecated, do not use
     /*
      * free_cell_id_ store (x,y) of free cells of the map
@@ -148,7 +149,7 @@ protected:
 namespace utils
 {
     std::array<float, 3> map_to_world(std::array<float, 3> p_in_map, ranges::OMap omap);
-    void print_particles(std::vector<float> x, std::vector<float> y, std::vector<float> angle, std::vector<double> weights);
+    void print_particles(std::vector<float> &x, std::vector<float> y, std::vector<float> angle, std::vector<double> weights);
 }
 
 #endif

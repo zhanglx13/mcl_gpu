@@ -914,6 +914,34 @@ namespace ranges {
             throw std::string("Must compile with -DWITH_CUDA=ON to use this class.");
 #endif
         }
+
+        /*
+         * calc range for each pose, adding every angle, evaluating the sensor model
+         *
+         * This method uses one thread to do computation for one particle
+         */
+        void calc_range_eval_sensor_model_particle(
+            std::vector<float> px, std::vector<float> py, std::vector<float> pangle, // particles
+            std::vector<float> obs, // observation, i.e. downsampled_ranges_
+            std::vector<float> angles, // downsampled_angles_
+            std::vector<double> weights, // output, i.e. weight of each particle
+            int num_particles,
+            int num_angles // number of downsampled angles
+            ){
+#if USE_CUDA == 1
+#if ROS_WORLD_TO_GRID_CONVERSION == 0
+            std::cout << "Cannot use GPU numpy_calc_range without ROS_WORLD_TO_GRID_CONVERSION == 1" << std::endl;
+            return;
+#endif
+            rmc->calc_range_eval_sensor_model_particle(
+                px.data(), py.data(), pangle.data(),
+                obs.data(), angles.data(), weights.data(),
+                num_particles, num_angles
+                );
+#else
+            throw std::string("Must compile with -DWITH_CUDA=ON to use this class.");
+#endif
+        }
 #endif
 
         int memory() { return distImage->memory(); }

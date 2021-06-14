@@ -16,6 +16,57 @@ __device__ float distance(int x, int y, float *distMap, int width, int height) {
 	return distMap[x * height + y];
 }
 
+__device__ int clamp(float val, float min, float max) {
+	val = val>max?max:val;
+	val = val<min?min:val;
+	return (int)val;
+}
+
+/*
+ * calculate a single range request of (x0, y0, theta) in the grid frame
+ * Note that the returned range is the distance in the map frame
+ */
+__device__ float calc_range(float x0, float y0, float theta, float *distMap, int width, int height, float max_range)
+{
+    float ray_direction_x = cosf(theta);
+    float ray_direction_y = sinf(theta);
+
+    int px = 0;
+    int py = 0;
+
+    float t = 0.0;
+    float out = max_range;
+
+    while (t < max_range) {
+        px = x0 + ray_direction_x * t;
+        py = y0 + ray_direction_y * t;
+
+        if (px >= width || px < 0 || py < 0 || py >= height) {
+            out = max_range;
+            break;
+        }
+
+        float d = distance(px,py, distMap, width, height);
+
+        if (d <= DIST_THRESHOLD) {
+            float xd = px - x0;
+            float yd = py - y0;
+            out =  sqrtf(xd*xd + yd*yd);
+            break;
+        }
+
+        t += fmaxf(d * STEP_COEFF, 1.0);
+    }
+    return out;
+}
+
+__device__ float eval_sensor_model(float ob, float range, double *sensorTable, float inv_world_scale, int table_width)
+{
+    int r = clamp(ob * inv_world_scale, 0, table_width - 1.0);
+    int d = clamp(range, 0, table_width - 1.0);
+    return sensorTable[r * table_width + d];
+}
+
 __global__ void cuda_ray_marching(float * ins, float * outs, float * distMap, int width, int height, float max_range, int num_casts) {
 	int ind = blockIdx.x*blockDim.x + threadIdx.x;
 	if (ind >= num_casts) return; 
@@ -109,6 +160,64 @@ __global__ void cuda_ray_marching_world_to_grid(float * ins, float * outs, float
 	outs[ind] = out * world_scale;
 }
 
+/*
+ * Each thread works on one particle, which includes
+ *   1. Obtain the particle's pose ==> (x,y,theta)
+ *   2. Convert the pose in the grid frame
+ *   3. Add angles to theta to make an array of range requests
+ *   4. Compute the range for each request
+ *   5. Evaluate each request using the sensor table
+ *   6. Compute the weight of the particle
+ */
+__global__ void cuda_ray_marching_particle_world_to_grid(
+    float *px, float *py, float * pangle, // particles -- pose in world frame
+    float *distMap, int width, int height, float max_range, // Map info
+    float *obs, // observations, i.e. downsampled ranges from the lidar sensor
+    float *angles, // downsampled angles for each particle
+    double *sensorTable,  // sensor model table
+    int table_width, // sensor table width
+    double *weights, // output, i.e. weight of each particle
+    int num_particles, int num_angles, // dimension
+    /* the following arguments are use to convert world coordinates to grid coordinates */
+    float world_origin_x, float world_origin_y,
+    float world_scale, float inv_world_scale,
+    float world_sin_angle, float world_cos_angle,
+    float rotation_const
+    )
+{
+    int ind = blockIdx.x * blockDim.x + threadIdx.x;
+    if (ind >= num_particles) return;
+
+    /* Step 1: obtain the particle's pose in world frame */
+    float x_world = px[ind];
+    float y_world = py[ind];
+    float theta_world = pangle[ind];
+
+    /* Step 2: convert the pose from world to grid space coordinates */
+    float x0 = (x_world - world_origin_x) * inv_world_scale;
+    float y0 = (y_world - world_origin_y) * inv_world_scale;
+    float temp = x0;
+    x0 = world_cos_angle*x0 - world_sin_angle*y0;
+    y0 = world_sin_angle*temp + world_cos_angle*y0;
+    temp = x0;
+    x0 = y0;
+    y0 = temp;
+
+    double w = 1.0;
+    for (int ai = 0; ai < num_angles; ai ++)
+    {
+        /* Step 3: Add angles to theta to make an array of range requests */
+        float theta = -theta_world + rotation_const - angles[ai];
+        /* Step 4: Compute the range for each request */
+        float d = calc_range(x0, y0, theta, distMap, width, height, max_range);
+        /* Step 5: Evaluate each request using the sensor table */
+        float eval = eval_sensor_model(obs[ai], d, sensorTable, 1.0/world_scale, table_width);
+        /* Step 6: Compute the weight of the particle */
+        w *= eval;
+    }
+    weights[ind] = w;
+}
+
 __global__ void cuda_ray_marching_angles_world_to_grid(float * ins, float * outs, float * distMap, int width, int height, float max_range, int num_particles, int num_angles, float world_origin_x, float world_origin_y, float world_scale, float inv_world_scale, float world_sin_angle, float world_cos_angle, float rotation_const) {
 	int ind = blockIdx.x*blockDim.x + threadIdx.x;
 	if (ind >= num_angles*num_particles) return; 
@@ -164,11 +273,7 @@ __global__ void cuda_ray_marching_angles_world_to_grid(float * ins, float * outs
 	outs[ind] = out * world_scale;
 }
 
-__device__ int clamp(float val, float min, float max) {
-	val = val>max?max:val;
-	val = val<min?min:val;
-	return (int)val;
-}
+
 
 // this should be optimized to use shared memory, otherwise the random read performance is not great
 __global__ void cuda_eval_sensor_table(float * obs, float * ranges, double * outs, double * sensorTable, int rays_per_particle, int particles, float inv_world_scale, int max_range) {
@@ -215,10 +320,21 @@ RayMarchingCUDA::RayMarchingCUDA(std::vector<std::vector<float> > grid, int w, i
 
 	cudaMemcpy(d_distMap, raw_grid, width*height*sizeof(float), cudaMemcpyHostToDevice);
 	free(raw_grid);
+        particles_allocated = 0;
 }
 
 RayMarchingCUDA::~RayMarchingCUDA() {
-	cudaFree(d_ins); cudaFree(d_outs); cudaFree(d_distMap);
+    cudaFree(d_ins); cudaFree(d_outs); cudaFree(d_distMap);
+    if (particles_allocated)
+    {
+        cudaFree(d_px);
+        cudaFree(d_py);
+        cudaFree(d_pangle);
+        cudaFree(d_angles);
+        cudaFree(d_obs);
+        cudaFree(d_weights);
+        particles_allocated = 0;
+    }
 }
 
 void RayMarchingCUDA::set_sensor_table(double *table, int t_w) {
@@ -312,4 +428,56 @@ void RayMarchingCUDA::calc_range_repeat_angles_eval_sensor_model(float * ins, fl
 	#else
 	std::cout << "GPU numpy_calc_range_angles only works with ROS world to grid conversion enabled" << std::endl;
 	#endif
+}
+
+void RayMarchingCUDA::calc_range_eval_sensor_model_particle(float *px, float *py, float *pangle, float *obs, float *angles, double *weights, int num_particles, int num_angles)
+{
+#if ROS_WORLD_TO_GRID_CONVERSION == 1
+    //std::cout<< "RayMarchingCUDA::calc_range_eval_sensor_model_particle called!!!" <<std::endl;
+    //std::cout<< "max_range in RayMarchingCUDA class is " << get_max_range() << std::endl;
+    //std::cout<< "table_width in RayMarchingCUDA class is " << table_width << std::endl;
+
+    if (!particles_allocated)
+    {
+        /* Allocate space on device memory */
+        cudaMalloc((void **)&d_px, sizeof(float)*num_particles);
+        cudaMalloc((void **)&d_py, sizeof(float)*num_particles);
+        cudaMalloc((void **)&d_pangle, sizeof(float)*num_particles);
+
+        cudaMalloc((void **)&d_angles, sizeof(float)*num_angles);
+        cudaMalloc((void **)&d_obs, sizeof(float)*num_angles);
+        /*
+         * We only copy the angles and obs the first time this function is called
+         * since their values do not change.
+         */
+        cudaMemcpy(d_angles, angles, sizeof(float)*num_angles, cudaMemcpyHostToDevice);
+        cudaMemcpy(d_obs, obs, sizeof(float)*num_angles, cudaMemcpyHostToDevice);
+
+        cudaMalloc((void **)&d_weights, sizeof(double)*num_particles);
+
+        err_check();
+        particles_allocated = 1;
+    }
+
+    /* Copy date from CPU to device memory*/
+    cudaMemcpy(d_px, px, sizeof(float)*num_particles, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_py, py, sizeof(float)*num_particles, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_pangle, pangle, sizeof(float)*num_particles, cudaMemcpyHostToDevice);
+
+    err_check();
+
+    cuda_ray_marching_particle_world_to_grid<<<num_particles/NUM_THREADS, NUM_THREADS>>>(
+        d_px, d_py, d_pangle, // particles -- pose in world frame
+        d_distMap, width, height, max_range, // Map info
+        d_obs, // observations, i.e. downsampled ranges from the lidar sensor
+        d_angles, // downsampled angles for each particle
+        d_sensorTable, // sensor model table
+        table_width,
+        d_weights, // output, i.e. weight of each particle
+        num_particles, num_angles, // dimension
+        /* the following arguments are use to convert world coordinates to grid coordinates */
+        world_origin_x, world_origin_y, world_scale, inv_world_scale, world_sin_angle, world_cos_angle, rotation_const);
+#else
+    std::cout << "GPU calc_range_eval_sensor_model_particl only works with ROS world to grid conversion enabled" << std::endl;
+#endif
 }
