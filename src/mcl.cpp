@@ -353,20 +353,43 @@ void MCL::update()
         else
             ROS_ERROR("The chosen method is not implemented yet");
 
-        /* calculate inferred pose */
-        /*
-          @note
-         * std::transform_reduce requires c++17
-         */
-        inferred_pose_[0] = std::transform_reduce(particles_x_.begin(), particles_x_.end(),
-                                                 weights_.begin(), 0.0);
-        inferred_pose_[1] = std::transform_reduce(particles_y_.begin(), particles_y_.end(),
-                                                 weights_.begin(), 0.0);
-        inferred_pose_[2] = std::transform_reduce(particles_angle_.begin(), particles_angle_.end(),
-                                                 weights_.begin(), 0.0);
+        /* update inferred_pose_ */
+        expected_pose();
+
+        ros::Time t2 = ros::Time::now();
+
+        /* publish transformation frame based on inferred pose */
+        publish_tf();
+
+        /* seconds per iteration */
+        ros::Duration spi = t2 - t1;
+        /* iterations per second */
+        double ips = 1.0 / spi.toSec();
+
+        visualize();
 
     }
 }
+
+void MCL::expected_pose()
+{
+    /*
+      @note
+      * std::transform_reduce requires c++17
+      */
+    inferred_pose_[0] = std::transform_reduce(particles_x_.begin(), particles_x_.end(),
+                                              weights_.begin(), 0.0);
+    inferred_pose_[1] = std::transform_reduce(particles_y_.begin(), particles_y_.end(),
+                                              weights_.begin(), 0.0);
+    inferred_pose_[2] = std::transform_reduce(particles_angle_.begin(), particles_angle_.end(),
+                                              weights_.begin(), 0.0);
+}
+
+void MCL::publish_tf()
+{}
+
+void MCL::visulaize()
+{}
 
 void MCL::MCL_cpu()
 {

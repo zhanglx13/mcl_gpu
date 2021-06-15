@@ -39,6 +39,12 @@ public:
 
     void motion_model();
     void sensor_model();
+
+    void expected_pose();
+    void publish_tf();
+
+    void visualize();
+
     void print_particles(int n);
 
 protected:
