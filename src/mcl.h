@@ -115,7 +115,7 @@ protected:
      * to the car frame.
      * Note that the rotation is expressed as angle instead of quaternion
      */
-    std::array<float, 3> odometry_delta_;
+    std::array<float, 3> odometry_delta_ {0};
     ros::Time last_stamp_;
 
 

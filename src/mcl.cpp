@@ -1,5 +1,6 @@
 #include "mcl.h"
 #define _USE_MATH_DEFINES // for pi
+#include <numeric> // for transform_reduce
 
 
 MCL::MCL(ranges::OMap omap, float max_range_px): omap_(omap), rmgpu_ (omap, max_range_px)
@@ -352,7 +353,17 @@ void MCL::update()
         else
             ROS_ERROR("The chosen method is not implemented yet");
 
-        //inferred_pose_ = expected_pose();
+        /* calculate inferred pose */
+        /*
+          @note
+         * std::transform_reduce requires c++17
+         */
+        inferred_pose_[0] = std::transform_reduce(particles_x_.begin(), particles_x_.end(),
+                                                 weights_.begin(), 0.0);
+        inferred_pose_[1] = std::transform_reduce(particles_y_.begin(), particles_y_.end(),
+                                                 weights_.begin(), 0.0);
+        inferred_pose_[2] = std::transform_reduce(particles_angle_.begin(), particles_angle_.end(),
+                                                 weights_.begin(), 0.0);
 
     }
 }
@@ -438,11 +449,25 @@ void MCL::MCL_cpu()
     print_particles(10);
 
     /* Step 4: normalize the weights_  (but why?) */
-    double sum_weight = std::accumulate(weights_.begin(), weights_.end(), 0.0);
+    /*
+      @note
+     * std::reduce requires c++17
+     */
+    double sum_weight = std::reduce(weights_.begin(), weights_.end(), 0.0);
     std::transform(weights_.begin(), weights_.end(), weights_.begin(),
                   [s = sum_weight](double w) {return w / s;});
     ROS_INFO("Printing particles after normalizing");
     print_particles(10);
+
+    /* Inferref pose */
+    inferred_pose_[0] = std::transform_reduce(particles_x_.begin(), particles_x_.end(),
+                                             weights_.begin(), 0.0);
+    inferred_pose_[1] = std::transform_reduce(particles_y_.begin(), particles_y_.end(),
+                                             weights_.begin(), 0.0);
+    inferred_pose_[2] = std::transform_reduce(particles_angle_.begin(), particles_angle_.end(),
+                                             weights_.begin(), 0.0);
+    ROS_INFO("Inferred posr: %f  %f  %f",
+             inferred_pose_[0], inferred_pose_[1], inferred_pose_[2]);
 }
 
 void MCL::MCL_gpu(){}
