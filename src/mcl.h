@@ -98,6 +98,7 @@ protected:
     ros::Subscriber click_sub_;
 
     ranges::RayMarchingGPU rmgpu_;
+    ranges::RayMarching rm_;
 
     /* internal state used by the MCL algorithm */
     bool lidar_initialized_;

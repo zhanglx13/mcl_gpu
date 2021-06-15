@@ -19,9 +19,10 @@
   <arg name="squash_factor" default="2.2"/>
   <arg name="viz" default="1"/>
   <arg name="which_impl" default="cpu"/>
+  <arg name="which_rm" default="rmgpu"/>
 
   <node pkg="mcl_gpu" type="mcl_gpu" name="mcl_gpu" output="screen">
-    <param name="which_rm" value="rmgpu"/>
+    <param name="which_rm" value="$(arg which_rm)"/>
     <param name="which_impl" value="$(arg which_impl)"/>
     <param name="scan_topic" value="$(arg scan_topic)"/>
     <param name="odometry_topic" value="$(arg odometry_topic)"/>

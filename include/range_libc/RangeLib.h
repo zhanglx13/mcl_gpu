@@ -1079,6 +1079,62 @@ namespace ranges {
             return max_range;
         }
 
+        void calc_range_eval_sensor_model(
+            float *px, float *py, float *pangle,
+            float *obs, float *angles,
+            double *weights,
+            int num_particles, int num_angles
+            )
+        {
+            /* cache these constants on the stack for efficiency */
+            float inv_world_scale = 1.0 / map.world_scale;
+            float world_scale = map.world_scale;
+            float world_angle = map.world_angle;
+            float world_origin_x = map.world_origin_x;
+            float world_origin_y = map.world_origin_y;
+            float world_sin_angle = map.world_sin_angle;
+            float world_cos_angle = map.world_cos_angle;
+            float rotation_const = -1.0 * world_angle - 3.0*M_PI / 2.0;
+
+            /* avoid allocation on every loop iteration */
+            float x_world;
+            float y_world;
+            float theta_world;
+            float x;
+            float y;
+            float temp;
+            float theta;
+            double w;
+            float r,d;
+
+            for (int i = 0; i < num_particles; i ++)
+            {
+                x_world = px[i];
+                y_world = py[i];
+                theta_world = pangle[i];
+                theta = theta_world + rotation_const;
+
+                x = (x_world - world_origin_x) * inv_world_scale;
+                y = (y_world - world_origin_y) * inv_world_scale;
+                temp = x;
+                x = world_cos_angle*x - world_sin_angle*y;
+                y = world_sin_angle*temp + world_cos_angle*y;
+
+                w = 1.0;
+                for (int a = 0; a < num_angles; a ++)
+                {
+                    d = calc_range(y, x, theta - angles[a]);
+                    d = std::min<float>(std::max<float>(d,0.0),(float)sensor_model.size()-1.0);
+                    r = obs[a] * inv_world_scale;
+                    r = std::min<float>(std::max<float>(r,0.0),(float)sensor_model.size()-1.0);
+                    w *= sensor_model[(int)r][(int)d];
+                    printf("%2d %2d: %lf\n", i, a, sensor_model[(int)r][(int)d]);
+                }
+                weights[i] = w;
+            }
+        }
+
+
         int memory() { return distImage.memory(); }
     protected:
         DistanceTransform distImage;

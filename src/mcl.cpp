@@ -3,7 +3,7 @@
 #include <numeric> // for transform_reduce
 
 
-MCL::MCL(ranges::OMap omap, float max_range_px): omap_(omap), rmgpu_ (omap, max_range_px)
+MCL::MCL(ranges::OMap omap, float max_range_px): omap_(omap), rmgpu_ (omap, max_range_px), rm_ (omap, max_range_px)
 {
     ros::NodeHandle private_nh_("~");
     private_nh_.getParam("angle_step", p_angle_step_);
@@ -189,7 +189,12 @@ void MCL::precompute_sensor_model()
             sensor_model_table_[r * table_width + d] /= norm;
     }
     /* Upload the sensor mode to RayMarchingGPU */
-    rmgpu_.set_sensor_model(sensor_model_table_, table_width);
+    if (!p_which_rm_.compare("rmgpu"))
+        rmgpu_.set_sensor_model(sensor_model_table_, table_width);
+    else if (!p_which_rm_.compare("rm"))
+        rm_.set_sensor_model(sensor_model_table_, table_width);
+    else
+        ROS_ERROR("Unknown rm method!!");
 #if 0
     /* preview the sensor table */
     ROS_INFO("Sensor mode done. Preview: ");
@@ -586,23 +591,34 @@ void MCL::motion_model()
  */
 void MCL::sensor_model()
 {
-    /*
-     * one thread compute one particle
-     *
-     * Note that we split the particles into 3 vectors so that cuda kernels
-     * can have coalesced memory access patterns when accessing particles.
-     */
-    rmgpu_.calc_range_eval_sensor_model_particle(
-        particles_x_, particles_y_, particles_angle_,
-        downsampled_ranges_, downsampled_angles_, weights_,
-        p_max_particles_, (int)downsampled_ranges_.size());
+    if (!p_which_rm_.compare("rmgpu"))
+    {
+        /*
+         * one thread compute one particle
+         *
+         * Note that we split the particles into 3 vectors so that cuda kernels
+         * can have coalesced memory access patterns when accessing particles.
+         */
+        rmgpu_.calc_range_eval_sensor_model_particle(
+            particles_x_, particles_y_, particles_angle_,
+            downsampled_ranges_, downsampled_angles_, weights_,
+            p_max_particles_, (int)downsampled_ranges_.size());
 #if 0
-    /* one thread compute one range */
-    rmgpu_.calc_range_eval_sensor_model_angle(
-        particles_x_, particles_y_, particles_angle_,
-        downsampled_ranges_, downsampled_angles_, weights_,
-        p_max_particles_, (int)downsampled_ranges_.size());
+        /* one thread compute one range */
+        rmgpu_.calc_range_eval_sensor_model_angle(
+            particles_x_, particles_y_, particles_angle_,
+            downsampled_ranges_, downsampled_angles_, weights_,
+            p_max_particles_, (int)downsampled_ranges_.size());
 #endif
+    }
+    else if (!p_which_rm_.compare("rm"))
+    {
+        rm_.calc_range_eval_sensor_model(
+            particles_x_.data(), particles_y_.data(), particles_angle_.data(),
+            downsampled_angles_.data(), downsampled_angles_.data(),
+            weights_.data(),
+            p_max_particles_, (int)downsampled_angles_.size());
+    }
 }
 
 void MCL::print_particles(int n)
@@ -633,7 +649,6 @@ std::array<float, 3> utils::map_to_world(std::array<float, 3> p_in_map,ranges::O
 
 void utils::print_particles(std::vector<float> &x, std::vector<float> y, std::vector<float> angle, std::vector<double> weights)
 {
-    printf("Calling print partiles !! ==> %d\n", x.size());
     for (int i = 0; i < x.size(); i++)
     {
         printf("%3d:  %f  %f  %f  (%lf)\n", i, x[i], y[i], angle[i], weights[i]);
