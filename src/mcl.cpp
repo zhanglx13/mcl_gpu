@@ -386,9 +386,40 @@ void MCL::expected_pose()
 }
 
 void MCL::publish_tf()
-{}
+{
+    /*
+      @note
+     * Check the tutorial for how to write a tf broadcaster
+     * https://wiki.ros.org/tf/Tutorials/Writing%20a%20tf%20broadcaster%20%28C%2B%2B%29
+     * Note: sendTransform and StampedTransform have opposite ordering of parent and child.
+     */
+    tf::Transform transform;
+    transform.setOrigin( tf::Vector3(inferred_pose_[0], inferred_pose_[1], 0.0) );
+    tf::Quaternion q;
+    q.setRPY(0,0, inferred_pose_[2]);
+    transform.setRotation(q);
+    tf_pub_.sendTransform( tf::StampedTransform( transform, last_stamp_, "/map", "/laser" ) );
 
-void MCL::visulaize()
+    if (p_publish_odom_)
+    {
+        /* Publish the odometry message over ROS */
+        /*
+         * Create a quaternion message
+         * Note that this is different from the quaternion in tf
+         */
+        geometry_msgs::Quaternion odom_quat = tf::createQuaternionMsgFromYaw(inferred_pose_[2]);
+        nav_msgs::Odometry odom;
+        odom.header.stamp = last_stamp_;
+        odom.header.frame_id = "/map";
+        odom.pose.pose.position.x = inferred_pose_[0];
+        odom.pose.pose.position.y = inferred_pose_[1];
+        odom.pose.pose.position.z = 0.0;
+        odom.pose.pose.orientation = odom_quat;
+        odom_pub_.publish(odom);
+    }
+}
+
+void MCL::visualize()
 {}
 
 void MCL::MCL_cpu()
@@ -504,7 +535,6 @@ void MCL::motion_model()
     std::vector<float> sines;
     cosines.resize(p_max_particles_);
     sines.resize(p_max_particles_);
-    std::cout<<particles_x_.size()<<std::endl;
     std::transform(particles_angle_.begin(), particles_angle_.end(), cosines.begin(),
                    [](float theta) {return cos(theta);});
     std::transform(particles_angle_.begin(), particles_angle_.end(), sines.begin(),
