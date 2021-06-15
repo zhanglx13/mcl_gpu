@@ -369,9 +369,9 @@ void MCL::MCL_cpu()
     std::vector<float> particles_x;
     std::vector<float> particles_y;
     std::vector<float> particles_angle;
-    particles_x.reserve(p_max_particles_);
-    particles_y.reserve(p_max_particles_);
-    particles_angle.reserve(p_max_particles_);
+    particles_x.resize(p_max_particles_);
+    particles_y.resize(p_max_particles_);
+    particles_angle.resize(p_max_particles_);
     /*
      * https://stackoverflow.com/questions/42926209/equivalent-function-to-numpy-random-choice-in-c
      * Use weights_ to construct a distribution
@@ -379,9 +379,9 @@ void MCL::MCL_cpu()
      * Make some fake weights for testing
      */
     // for (int i = 0; i < weights_.size(); i++)
-    //     weights_[i] = i;
-    // ROS_INFO("Printing particles before resampling");
-    // print_particles(p_max_particles_);
+    //      weights_[i] = i;
+    ROS_INFO("Printing particles before resampling");
+    print_particles(10);
     std::discrete_distribution<int> distribution(weights_.begin(), weights_.end());
     /* vector used to hold indices of selected particles */
     std::vector<int> indices;
@@ -404,13 +404,13 @@ void MCL::MCL_cpu()
                    [this](int index) {return particles_y_[index];});
     std::transform(indices.begin(), indices.end(), particles_angle.begin(),
                    [this](int index) {return particles_angle_[index];});
-    //ROS_INFO("Printing particles after resampling");
-    //utils::print_particles(particles_x, particles_y, particles_angle, weights_);
-    // ROS_INFO("Particles without _");
-    // utils::print_particles(particles_x, particles_y, particles_angle, weights_);
-    particles_x_ = std::move(particles_x);
-    particles_y_ = std::move(particles_y);
-    particles_angle_ = std::move(particles_angle);
+
+    std::copy(particles_x.begin(), particles_x.end(), particles_x_.begin());
+    std::copy(particles_y.begin(), particles_y.end(), particles_y_.begin());
+    std::copy(particles_angle.begin(), particles_angle.end(), particles_angle_.begin());
+
+    ROS_INFO("Printing particles after resampling");
+    print_particles(10);
 
     /* Construct a histogram for testing */
     // std::vector<int> hist;
@@ -423,20 +423,26 @@ void MCL::MCL_cpu()
     // printf("hist.size = %d\n", hist.size());
     // for (int i = 0; i < hist.size(); i++)
     //     printf("%2d:  %d\n", i, hist[i]);
-    // ROS_INFO("Printing particles after resampling");
-    // print_particles(p_max_particles_);
 
-    ROS_INFO("Odometry delta: ");
-    for (float data : odometry_delta_)
-        printf("%lf  ", data);
-    printf("\n");
+    ROS_INFO("Odometry delta: %f  %f  %f",
+             odometry_delta_[0], odometry_delta_[1], odometry_delta_[2]);
 
     /* Step 2: apply the motion model to the particles */
     motion_model();
+    ROS_INFO("Printing particles after motion model");
+    print_particles(10);
 
     /* Step 3: apply the sensor model to compute the weights of particles */
     sensor_model();
+    ROS_INFO("Printing particles after sensor model");
+    print_particles(10);
 
+    /* Step 4: normalize the weights_  (but why?) */
+    double sum_weight = std::accumulate(weights_.begin(), weights_.end(), 0.0);
+    std::transform(weights_.begin(), weights_.end(), weights_.begin(),
+                  [s = sum_weight](double w) {return w / s;});
+    ROS_INFO("Printing particles after normalizing");
+    print_particles(10);
 }
 
 void MCL::MCL_gpu(){}
@@ -448,8 +454,9 @@ void MCL::motion_model()
     /* rotate the action into the coordinate space of each particle */
     std::vector<float> cosines;
     std::vector<float> sines;
-    cosines.reserve(p_max_particles_);
-    sines.reserve(p_max_particles_);
+    cosines.resize(p_max_particles_);
+    sines.resize(p_max_particles_);
+    std::cout<<particles_x_.size()<<std::endl;
     std::transform(particles_angle_.begin(), particles_angle_.end(), cosines.begin(),
                    [](float theta) {return cos(theta);});
     std::transform(particles_angle_.begin(), particles_angle_.end(), sines.begin(),
@@ -457,8 +464,8 @@ void MCL::motion_model()
 
     std::vector<float> local_deltas_x;
     std::vector<float> local_deltas_y;
-    local_deltas_x.reserve(p_max_particles_);
-    local_deltas_y.reserve(p_max_particles_);
+    local_deltas_x.resize(p_max_particles_);
+    local_deltas_y.resize(p_max_particles_);
     std::transform(cosines.begin(), cosines.end(),
                    sines.begin(),
                    local_deltas_x.begin(),
@@ -522,8 +529,10 @@ void MCL::sensor_model()
 
 void MCL::print_particles(int n)
 {
+    if (n > particles_x_.size()) n = particles_x_.size();
     for (int i = 0; i < n; i ++)
         printf("%3d:  %f  %f  %f\t(%lf)\n", i, particles_x_[i], particles_y_[i], particles_angle_[i], weights_[i]);
+
 }
 
 
