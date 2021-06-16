@@ -241,9 +241,23 @@ namespace ranges {
             world_origin_x = map.info.origin.position.x;
             world_origin_y = map.info.origin.position.y;
 
-            world_angle = -1.0f*quaternion_to_angle(map.info.origin.orientation);
+            //world_angle = -1.0f*quaternion_to_angle(map.info.origin.orientation);
+            /*
+             * This is difference from the implementation given in RangeLibc.pyx line 160,
+             * in which the angle is negated.
+             * I haven't figured out why the python wrapper author did so.
+             */
+            world_angle = quaternion_to_angle(map.info.origin.orientation);
             world_sin_angle = sin(world_angle);
             world_cos_angle = cos(world_angle);
+
+            printf("OMap parameters:\n");
+            printf("  world_scale:     %f\n", world_scale);
+            printf("  world_origin_x:  %f\n", world_origin_x);
+            printf("  world_origin_y:  %f\n", world_origin_y);
+            printf("  world_angle:     %f\n", world_angle);
+            printf("  world_sin_angle: %f\n", world_sin_angle);
+            printf("  world_cos_angle: %f\n", world_cos_angle);
 
         }
 
@@ -597,16 +611,23 @@ namespace ranges {
                 x_world = ins[i*3];
                 y_world = ins[i*3+1];
                 theta_world = ins[i*3+2];
+                printf("(x,y,theta) in world = (%f, %f, %f)\n", x_world, y_world, theta_world);
                 theta = -theta_world + rotation_const;
 
                 x = (x_world - world_origin_x) * inv_world_scale;
                 y = (y_world - world_origin_y) * inv_world_scale;
                 temp = x;
-                x = world_cos_angle*x - world_sin_angle*y;
-                y = world_sin_angle*temp + world_cos_angle*y;
+                // x = world_cos_angle*x - world_sin_angle*y;
+                // y = world_sin_angle*temp + world_cos_angle*y;
+                x = world_cos_angle*x + world_sin_angle*y;
+                y = - world_sin_angle*temp + world_cos_angle*y;
+                printf("(x,y,theta) in map = (%f, %f, %f)\n", x, y, theta);
 
-                for (int a = 0; a < num_angles; ++a)
-                    outs[i*num_angles+a] = calc_range(y, x, theta - angles[a]) * world_scale;
+                for (int a = 0; a < num_angles; ++a){
+                    printf("calc_range(%f, %f, %f) = %f\n", x, y, theta - angles[a], calc_range(x, y, theta - angles[a]));
+                    // outs[i*num_angles+a] = calc_range(y, x, theta - angles[a]) * world_scale;
+                    outs[i*num_angles+a] = calc_range(x, y, theta - angles[a]) * world_scale;
+                }
             }
         }
 
@@ -1048,11 +1069,23 @@ namespace ranges {
 
             float ray_direction_x = cosf(heading);
             float ray_direction_y = sinf(heading);
+            printf("Direction: %f, %f\n", ray_direction_x, ray_direction_y);
 
             int px = 0;
             int py = 0;
 
             float t = 0.0;
+            // printf("Preview distImage\n");
+            // for (int j = 950; j < 1020; j++){
+            //     //printf("%4d:  ", j);
+            //     for (int i = 100; i < 1200; i++){
+            //         distImage.grid[i][j] = 0.0;
+            //         //printf("%.2f  ", distImage.get(i,j));
+            //     }
+            //     //printf("\n");
+            // }
+            // printf("width is %d, height is %d\n", map.width, map.height);
+            // distImage.save("/home/lixun/disImage.png");
             while (t < max_range) {
                 px = x0 + ray_direction_x * t;
                 py = y0 + ray_direction_y * t;
@@ -1062,6 +1095,7 @@ namespace ranges {
                 }
 
                 float d = distImage.get(px, py);
+                printf("At (%d, %d) d is %f\n", px, py, d);
 
 #if _MAKE_TRACE_MAP == 1
                 map.isOccupied(px,py); // this makes a dot appear in the trace map
@@ -1070,6 +1104,7 @@ namespace ranges {
                 if (d <= distThreshold) {
                     float xd = px - x0;
                     float yd = py - y0;
+                    printf("result: %f\n",sqrtf(xd*xd + yd*yd));
                     return sqrtf(xd*xd + yd*yd);
                 }
 
@@ -1128,7 +1163,7 @@ namespace ranges {
                     r = obs[a] * inv_world_scale;
                     r = std::min<float>(std::max<float>(r,0.0),(float)sensor_model.size()-1.0);
                     w *= sensor_model[(int)r][(int)d];
-                    printf("%2d %2d: %lf\n", i, a, sensor_model[(int)r][(int)d]);
+                    //printf("%2d %2d: d (%f) r (%f)  %lf\n", i, a, d, r, sensor_model[(int)r][(int)d]);
                 }
                 weights[i] = w;
             }

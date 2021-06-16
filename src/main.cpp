@@ -58,7 +58,18 @@ int main(int argc, char** argv)
             ROS_INFO("    resolution: %f", map.info.resolution);
             ROS_INFO("    width:      %d", map.info.width);
             ROS_INFO("    height:     %d", map.info.height);
+            ROS_INFO("    origin (pose of cell[0][0])");
+            ROS_INFO("       x: %f", map.info.origin.position.x);
+            ROS_INFO("       y: %f", map.info.origin.position.y);
             ranges::OMap omap = ranges::OMap(map);
+            ROS_INFO("       angle: %f", omap.quaternion_to_angle(map.info.origin.orientation));
+            ROS_INFO("       quat: [%f %f %f %f]",
+                     map.info.origin.orientation.x,
+                     map.info.origin.orientation.y,
+                     map.info.origin.orientation.z,
+                     map.info.origin.orientation.w
+                );
+
 
             /*
               @note

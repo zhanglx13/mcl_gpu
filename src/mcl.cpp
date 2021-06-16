@@ -235,7 +235,7 @@ void MCL::initialize_global()
     std::uniform_real_distribution<float> distr(0,1);
     ros::WallTime spot1 = ros::WallTime::now();
     /* First we shuffle the free_cell_ids */
-    std::srand(std::time(0));
+    //std::srand(std::time(0));
     std::random_shuffle(free_cell_id_.begin(), free_cell_id_.end());
     ros::WallTime spot2 = ros::WallTime::now();
     /* Then we use the first p_max_particles_ free_cell ids to initialize the particles */
@@ -442,6 +442,10 @@ void MCL::MCL_cpu()
     particles_x.resize(p_max_particles_);
     particles_y.resize(p_max_particles_);
     particles_angle.resize(p_max_particles_);
+    float ins[3];
+    ins[0] = particles_x_[0];
+    ins[1] = particles_y_[0];
+    ins[2] = particles_angle_[0];
     /*
      * https://stackoverflow.com/questions/42926209/equivalent-function-to-numpy-random-choice-in-c
      * Use weights_ to construct a distribution
@@ -502,6 +506,29 @@ void MCL::MCL_cpu()
     ROS_INFO("Printing particles after motion model");
     print_particles(10);
 
+    /******************/
+    /*
+     * make a fake downsampled_ranges_ and downsampled_angles_
+     */
+    float amin = -3.1415927410125732;
+    float amax = 3.1415927410125732;
+    float inc = 0.005823155865073204;
+    int num_angles = (amax - amin) / inc + 1;
+    num_angles /= p_angle_step_;
+    ROS_INFO("num_angles: %d", num_angles);
+    downsampled_angles_.resize(num_angles);
+    downsampled_ranges_.resize(num_angles);
+    for (int a = 0; a < num_angles; a++)
+        downsampled_angles_[a] = amin + a * inc * p_angle_step_;
+
+    rm_.numpy_calc_range_angles (ins, downsampled_angles_.data(),
+                                 downsampled_ranges_.data(), 1, num_angles);
+
+    //printf("Testing calc_range: %f\n", rm_.calc_range(320.693115, 1158.984497, -1.908632));
+    for (int i=0; i<downsampled_ranges_.size(); i++){
+        printf("r is %f, angle is %f\n", downsampled_ranges_[i], downsampled_angles_[i]);
+    }
+    #if 0
     /* Step 3: apply the sensor model to compute the weights of particles */
     sensor_model();
     ROS_INFO("Printing particles after sensor model");
@@ -519,14 +546,10 @@ void MCL::MCL_cpu()
     print_particles(10);
 
     /* Inferref pose */
-    inferred_pose_[0] = std::transform_reduce(particles_x_.begin(), particles_x_.end(),
-                                             weights_.begin(), 0.0);
-    inferred_pose_[1] = std::transform_reduce(particles_y_.begin(), particles_y_.end(),
-                                             weights_.begin(), 0.0);
-    inferred_pose_[2] = std::transform_reduce(particles_angle_.begin(), particles_angle_.end(),
-                                             weights_.begin(), 0.0);
+    expected_pose();
     ROS_INFO("Inferred posr: %f  %f  %f",
              inferred_pose_[0], inferred_pose_[1], inferred_pose_[2]);
+    #endif
 }
 
 void MCL::MCL_gpu(){}
