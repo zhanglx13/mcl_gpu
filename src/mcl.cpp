@@ -115,7 +115,7 @@ void MCL::get_omap()
       */
     map_height_ = omap_.height;
     map_width_ = omap_.width;
-    permissible_region_ = (char*) malloc(sizeof(char)*map_width_*map_height_);
+    //permissible_region_ = (char*) malloc(sizeof(char)*map_width_*map_height_);
     int count = 0;
     for (int row = 0; row < map_height_; row++)
     {
@@ -127,11 +127,11 @@ void MCL::get_omap()
                 cell_id[0] = col;
                 cell_id[1] = row;
                 free_cell_id_.push_back(cell_id);
-                permissible_region_[row*map_width_ + col] = 1;
+                //permissible_region_[row*map_width_ + col] = 1;
                 count ++;
             }
-            else
-                permissible_region_[row*map_width_ + col] = 0;
+            //else
+            //    permissible_region_[row*map_width_ + col] = 0;
         }
     }
     ROS_INFO("Process omap and count is %d, which is %f", count, count*1.0 / (map_width_*map_height_));
@@ -145,7 +145,9 @@ void MCL::get_omap()
     unsigned char *image = (unsigned char*)malloc(sizeof(char)*map_height_*map_width_);
     for (int r = 0; r < map_height_; r ++)
         for (int c = 0; c < map_width_; c++)
-            image[r * map_width_ + c] = permissible_region_[r*map_width_+c]?0:255;
+            image[r * map_width_ + c] = 255;
+    for (std::array<int,2> cell : free_cell_id_)
+        image[cell[1] * map_width_ + cell[0]] = 0;
     if (lodepng_encode_file("/home/lixun/reconstructed_omap.png",image, map_width_, map_height_, LCT_GREY, 8))
     {
         ROS_ERROR("lodepng_encode");
@@ -235,7 +237,7 @@ void MCL::initialize_global()
     std::uniform_real_distribution<float> distr(0,1);
     ros::WallTime spot1 = ros::WallTime::now();
     /* First we shuffle the free_cell_ids */
-    //std::srand(std::time(0));
+    std::srand(std::time(0));
     std::random_shuffle(free_cell_id_.begin(), free_cell_id_.end());
     ros::WallTime spot2 = ros::WallTime::now();
     /* Then we use the first p_max_particles_ free_cell ids to initialize the particles */
@@ -244,7 +246,7 @@ void MCL::initialize_global()
         /* make sure p is not beyond the free_cell_id_'s capacity */
         if (p >= free_cell_id_.size())
             p = p % free_cell_id_.size();
-        std::array<float, 3> p_in_map;
+        pose_t p_in_map;
         /* x */
         p_in_map[0] = free_cell_id_.at(p).at(0);
         /* y */
@@ -252,7 +254,7 @@ void MCL::initialize_global()
         /* angle */
         p_in_map[2] = distr(eng) * 2.0 * M_PI;
         /* convert map coordinates to world coordinates */
-        std::array<float, 3> p_in_world = utils::map_to_world(p_in_map, omap_);
+        pose_t p_in_world = omap_.grid_to_world(p_in_map);
         /* now initialize the particles */
         particles_x_[p] = p_in_world[0];
         particles_y_[p] = p_in_world[1];
@@ -285,9 +287,6 @@ void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
     if (!lidar_initialized_)
     {
         int num_ranges_downsampled = num_ranges / p_angle_step_;
-        /* When receiving the first lidar data, do the following */
-        /* 1. allocate space for num_ranges_downsampled_ */
-        //downsampled_ranges_ = (float *) malloc(sizeof(float) * num_ranges_downsampled);
         downsampled_ranges_.resize(num_ranges_downsampled);
         downsampled_angles_.resize(num_ranges_downsampled);
         for (int i = 0; i < num_ranges_downsampled; i ++)
@@ -302,12 +301,16 @@ void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
 
 void MCL::odomCB(const nav_msgs::Odometry& msg)
 {
-    std::array<float, 3> pose;
+    pose_t pose;
     pose[0] = msg.pose.pose.position.x;
     pose[1] = msg.pose.pose.position.y;
     pose[2] = omap_.quaternion_to_angle(msg.pose.pose.orientation);
     if (odom_initialized_ >= 1)
     {
+        /*
+         * Compute the delta between two odometry in the car's frame,
+         * in which x axis is forward and y axis is left
+         */
         float c = cos(-last_pose_[2]);
         float s = sin(-last_pose_[2]);
         float dx = pose[0] - last_pose_[0];
@@ -430,31 +433,31 @@ void MCL::visualize()
 void MCL::MCL_cpu()
 {
     ROS_INFO("Calling MCL_cpu()");
-
-    //utils::print_particles(particles_x_, particles_y_, particles_angle_, weights_);
-
     /*
      * step 1: Resampling using discrete distribution
      */
+    /* temp local vectors used to resampling */
     std::vector<float> particles_x;
     std::vector<float> particles_y;
     std::vector<float> particles_angle;
     particles_x.resize(p_max_particles_);
     particles_y.resize(p_max_particles_);
     particles_angle.resize(p_max_particles_);
+#ifdef TESTING
+    /*
+     * Test the sensor model
+     * Save the first particle as the true state
+     */
     float ins[3];
     ins[0] = particles_x_[0];
     ins[1] = particles_y_[0];
     ins[2] = particles_angle_[0];
+#endif
     /*
      * https://stackoverflow.com/questions/42926209/equivalent-function-to-numpy-random-choice-in-c
      * Use weights_ to construct a distribution
-     *
-     * Make some fake weights for testing
      */
-    // for (int i = 0; i < weights_.size(); i++)
-    //      weights_[i] = i;
-    ROS_INFO("Printing particles before resampling");
+    ROS_DEBUG("Printing particles before resampling");
     print_particles(10);
     std::discrete_distribution<int> distribution(weights_.begin(), weights_.end());
     /* vector used to hold indices of selected particles */
@@ -483,39 +486,29 @@ void MCL::MCL_cpu()
     std::copy(particles_y.begin(), particles_y.end(), particles_y_.begin());
     std::copy(particles_angle.begin(), particles_angle.end(), particles_angle_.begin());
 
-    ROS_INFO("Printing particles after resampling");
+    ROS_DEBUG("Printing particles after resampling");
     print_particles(10);
 
-    /* Construct a histogram for testing */
-    // std::vector<int> hist;
-    // for (int i = 0; i< p_max_particles_; i++)
-    //     hist.push_back(0);
-    // for (int id : indices)
-    // {
-    //     hist[id] ++;
-    // }
-    // printf("hist.size = %d\n", hist.size());
-    // for (int i = 0; i < hist.size(); i++)
-    //     printf("%2d:  %d\n", i, hist[i]);
-
-    ROS_INFO("Odometry delta: %f  %f  %f",
+    ROS_DEBUG("Odometry delta: %f  %f  %f",
              odometry_delta_[0], odometry_delta_[1], odometry_delta_[2]);
 
     /* Step 2: apply the motion model to the particles */
     motion_model();
-    ROS_INFO("Printing particles after motion model");
+    ROS_DEBUG("Printing particles after motion model");
     print_particles(10);
 
-    /******************/
+#ifdef TESTING
     /*
      * make a fake downsampled_ranges_ and downsampled_angles_
+     * Since lidarCB is not called, so downsampled_ranges_ and downsampled_angles_
+     * are not initialized. For testing purpose, we need to manually do so.
      */
     float amin = -3.1415927410125732;
     float amax = 3.1415927410125732;
     float inc = 0.005823155865073204;
     int num_angles = (amax - amin) / inc + 1;
     num_angles /= p_angle_step_;
-    ROS_INFO("num_angles: %d", num_angles);
+    ROS_DEBUG("num_angles: %d", num_angles);
     downsampled_angles_.resize(num_angles);
     downsampled_ranges_.resize(num_angles);
     for (int a = 0; a < num_angles; a++)
@@ -524,14 +517,25 @@ void MCL::MCL_cpu()
     rm_.numpy_calc_range_angles (ins, downsampled_angles_.data(),
                                  downsampled_ranges_.data(), 1, num_angles);
 
-    //printf("Testing calc_range: %f\n", rm_.calc_range(320.693115, 1158.984497, -1.908632));
+    ROS_DEBUG("The chosen particles is %f  %f  %f", ins[0], ins[1], ins[2]);
     for (int i=0; i<downsampled_ranges_.size(); i++){
-        printf("r is %f, angle is %f\n", downsampled_ranges_[i], downsampled_angles_[i]);
+        if (i != 0 && i %6 == 0)
+            printf("\n");
+        printf("[%4.2f <- %4.2f]  ", downsampled_ranges_[i], ins[2]-omap_.world_angle - downsampled_angles_[i]);
     }
-    #if 0
+    printf("\n");
+#endif
     /* Step 3: apply the sensor model to compute the weights of particles */
+#ifdef TESTING
+    /*
+     * make the first particle exactly match the ins
+     */
+    particles_x_[0] = ins[0];
+    particles_y_[0] = ins[1];
+    particles_angle_[0] = ins[2];
+#endif
     sensor_model();
-    ROS_INFO("Printing particles after sensor model");
+    ROS_DEBUG("Printing particles after sensor model");
     print_particles(10);
 
     /* Step 4: normalize the weights_  (but why?) */
@@ -542,14 +546,13 @@ void MCL::MCL_cpu()
     double sum_weight = std::reduce(weights_.begin(), weights_.end(), 0.0);
     std::transform(weights_.begin(), weights_.end(), weights_.begin(),
                   [s = sum_weight](double w) {return w / s;});
-    ROS_INFO("Printing particles after normalizing");
+    ROS_DEBUG("Printing particles after normalizing");
     print_particles(10);
 
     /* Inferref pose */
     expected_pose();
-    ROS_INFO("Inferred posr: %f  %f  %f",
+    ROS_DEBUG("Inferred posr: %f  %f  %f",
              inferred_pose_[0], inferred_pose_[1], inferred_pose_[2]);
-    #endif
 }
 
 void MCL::MCL_gpu(){}
@@ -617,7 +620,7 @@ void MCL::sensor_model()
     if (!p_which_rm_.compare("rmgpu"))
     {
         /*
-         * one thread compute one particle
+         * one thread computes one particle
          *
          * Note that we split the particles into 3 vectors so that cuda kernels
          * can have coalesced memory access patterns when accessing particles.
@@ -638,7 +641,7 @@ void MCL::sensor_model()
     {
         rm_.calc_range_eval_sensor_model(
             particles_x_.data(), particles_y_.data(), particles_angle_.data(),
-            downsampled_angles_.data(), downsampled_angles_.data(),
+            downsampled_ranges_.data(), downsampled_angles_.data(),
             weights_.data(),
             p_max_particles_, (int)downsampled_angles_.size());
     }
@@ -646,34 +649,8 @@ void MCL::sensor_model()
 
 void MCL::print_particles(int n)
 {
-    if (n > particles_x_.size()) n = particles_x_.size();
+    if (n > particles_x_.size())
+        n = particles_x_.size();
     for (int i = 0; i < n; i ++)
-        printf("%3d:  %f  %f  %f\t(%lf)\n", i, particles_x_[i], particles_y_[i], particles_angle_[i], weights_[i]);
-
-}
-
-
-
-std::array<float, 3> utils::map_to_world(std::array<float, 3> p_in_map,ranges::OMap omap)
-{
-    std::array<float, 3> p_in_world;
-
-    float scale = omap.world_scale;
-    float angle = omap.world_angle;
-    float ca = omap.world_cos_angle;
-    float sa = omap.world_sin_angle;
-    float x = p_in_map[0];
-    float y = p_in_map[1];
-    p_in_world[0] = (ca*x-sa*y)*scale+omap.world_origin_x;
-    p_in_world[1] = (sa*x+ca*y)*scale+omap.world_origin_y;
-    p_in_world[2] = p_in_map[2] + angle;
-    return p_in_world;
-}
-
-void utils::print_particles(std::vector<float> &x, std::vector<float> y, std::vector<float> angle, std::vector<double> weights)
-{
-    for (int i = 0; i < x.size(); i++)
-    {
-        printf("%3d:  %f  %f  %f  (%lf)\n", i, x[i], y[i], angle[i], weights[i]);
-    }
+        ROS_DEBUG("%3d:  %f  %f  %f\t(%e)", i, particles_x_[i], particles_y_[i], particles_angle_[i], weights_[i]);
 }

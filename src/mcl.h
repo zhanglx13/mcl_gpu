@@ -131,7 +131,7 @@ protected:
     int map_height_; // deprecated
     ranges::OMap omap_;
     int p_max_range_px_;
-    char *permissible_region_; // deprecated, do not use
+    // char *permissible_region_; // deprecated, do not use
     /*
      * free_cell_id_ store (x,y) of free cells of the map
      * Note that x corresponds to the column and y corresponds to the row.
@@ -152,11 +152,5 @@ protected:
     std::vector<float> viz_ranges_;
 
 };
-
-namespace utils
-{
-    std::array<float, 3> map_to_world(std::array<float, 3> p_in_map, ranges::OMap omap);
-    void print_particles(std::vector<float> &x, std::vector<float> y, std::vector<float> angle, std::vector<double> weights);
-}
 
 #endif

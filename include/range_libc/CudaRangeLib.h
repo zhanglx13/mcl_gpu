@@ -36,7 +36,7 @@ public:
         constants_set = true;
     }
 #endif
-	
+
 private:
     float *d_ins;
     float *d_outs;

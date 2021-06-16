@@ -182,7 +182,7 @@ __global__ void cuda_ray_marching_particle_world_to_grid(
     float world_origin_x, float world_origin_y,
     float world_scale, float inv_world_scale,
     float world_sin_angle, float world_cos_angle,
-    float rotation_const
+    float world_angle
     )
 {
     int ind = blockIdx.x * blockDim.x + threadIdx.x;
@@ -197,17 +197,14 @@ __global__ void cuda_ray_marching_particle_world_to_grid(
     float x0 = (x_world - world_origin_x) * inv_world_scale;
     float y0 = (y_world - world_origin_y) * inv_world_scale;
     float temp = x0;
-    x0 = world_cos_angle*x0 - world_sin_angle*y0;
-    y0 = world_sin_angle*temp + world_cos_angle*y0;
-    temp = x0;
-    x0 = y0;
-    y0 = temp;
+    x0 = world_cos_angle*x0 + world_sin_angle*y0;
+    y0 = - world_sin_angle*temp + world_cos_angle*y0;
 
     double w = 1.0;
     for (int ai = 0; ai < num_angles; ai ++)
     {
         /* Step 3: Add angles to theta to make an array of range requests */
-        float theta = -theta_world + rotation_const - angles[ai];
+        float theta = theta_world - world_angle - angles[ai];
         /* Step 4: Compute the range for each request */
         float d = calc_range(x0, y0, theta, distMap, width, height, max_range);
         /* Step 5: Evaluate each request using the sensor table */
@@ -433,9 +430,6 @@ void RayMarchingCUDA::calc_range_repeat_angles_eval_sensor_model(float * ins, fl
 void RayMarchingCUDA::calc_range_eval_sensor_model_particle(float *px, float *py, float *pangle, float *obs, float *angles, double *weights, int num_particles, int num_angles)
 {
 #if ROS_WORLD_TO_GRID_CONVERSION == 1
-    //std::cout<< "RayMarchingCUDA::calc_range_eval_sensor_model_particle called!!!" <<std::endl;
-    //std::cout<< "max_range in RayMarchingCUDA class is " << get_max_range() << std::endl;
-    //std::cout<< "table_width in RayMarchingCUDA class is " << table_width << std::endl;
 
     if (!particles_allocated)
     {
@@ -476,7 +470,7 @@ void RayMarchingCUDA::calc_range_eval_sensor_model_particle(float *px, float *py
         d_weights, // output, i.e. weight of each particle
         num_particles, num_angles, // dimension
         /* the following arguments are use to convert world coordinates to grid coordinates */
-        world_origin_x, world_origin_y, world_scale, inv_world_scale, world_sin_angle, world_cos_angle, rotation_const);
+        world_origin_x, world_origin_y, world_scale, inv_world_scale, world_sin_angle, world_cos_angle, world_angle);
 #else
     std::cout << "GPU calc_range_eval_sensor_model_particl only works with ROS world to grid conversion enabled" << std::endl;
 #endif

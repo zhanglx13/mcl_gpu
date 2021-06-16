@@ -1,10 +1,15 @@
 #include <ros/ros.h>
+#include <ros/console.h>
 
 #include "mcl.h"
 #include "nav_msgs/GetMap.h"
 
 int main(int argc, char** argv)
 {
+    if( ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Debug) ) {
+        ros::console::notifyLoggerLevelsChanged();
+    }
+
     ros::init(argc, argv, "mcl_gpu");
 
 

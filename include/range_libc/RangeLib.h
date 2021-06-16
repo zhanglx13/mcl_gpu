@@ -126,6 +126,8 @@ Useful Links: https://github.com/MRPT/mrpt/blob/4137046479222f3a71b5c00aee1d5fa8
   #define USE_CUDA 0
 #endif
 
+typedef std::array<float, 3> pose_t;
+
 namespace ranges {
     struct OMap
     {
@@ -243,15 +245,19 @@ namespace ranges {
 
             //world_angle = -1.0f*quaternion_to_angle(map.info.origin.orientation);
             /*
-             * This is difference from the implementation given in RangeLibc.pyx line 160,
+              @fix
+             * This is different from the implementation given in RangeLibc.pyx line 160,
              * in which the angle is negated.
              * I haven't figured out why the python wrapper author did so.
+             * It works in most maps since the info.origin.orientation is 0 in most maps
              */
             world_angle = quaternion_to_angle(map.info.origin.orientation);
             world_sin_angle = sin(world_angle);
             world_cos_angle = cos(world_angle);
 
             printf("OMap parameters:\n");
+            printf("  width (x axis):  %d\n", width);
+            printf("  height (y axis): %d\n", height);
             printf("  world_scale:     %f\n", world_scale);
             printf("  world_origin_x:  %f\n", world_origin_x);
             printf("  world_origin_y:  %f\n", world_origin_y);
@@ -264,7 +270,8 @@ namespace ranges {
         float quaternion_to_angle(geometry_msgs::Quaternion orientation)
         {
             /*
-             * Convert quaternion to Euler angle
+              @note
+             * Convert quaternion message to Euler angle
              * Check: https://answers.ros.org/question/11545/plotprint-rpy-from-quaternion/#17106
              */
             tf::Quaternion quat;
@@ -272,6 +279,20 @@ namespace ranges {
             double roll, pitch, yaw;
             tf::Matrix3x3(quat).getRPY(roll,pitch,yaw);
             return yaw;
+        }
+
+        pose_t grid_to_world(pose_t p_in_grid)
+        {
+            pose_t p_in_world;
+
+            float ca = world_cos_angle;
+            float sa = world_sin_angle;
+            float x = p_in_grid[0];
+            float y = p_in_grid[1];
+            p_in_world[0] = (ca*x - sa*y) * world_scale + world_origin_x;
+            p_in_world[1] = (sa*x + ca*y) * world_scale + world_origin_y;
+            p_in_world[2] = p_in_grid[2] + world_angle;
+            return p_in_world;
         }
 
         /*
@@ -542,6 +563,9 @@ namespace ranges {
         // call overhead by passing it a numpy array pointer. Indexing assumes a 3xn numpy array
         // for the inputs and a 1xn numpy array of the outputs
         void numpy_calc_range(float * ins, float * outs, int num_casts) {
+            std::cout << "Do not call numpy_calc_range";
+            std::cout << " until the algorithm is verified" << std::endl;
+            return ;
 #if ROS_WORLD_TO_GRID_CONVERSION == 1
             // cache these constants on the stack for efficiency
             float inv_world_scale = 1.0 / map.world_scale;
@@ -594,7 +618,7 @@ namespace ranges {
             float world_origin_y = map.world_origin_y;
             float world_sin_angle = map.world_sin_angle;
             float world_cos_angle = map.world_cos_angle;
-            float rotation_const = -1.0 * world_angle - 3.0*M_PI / 2.0;
+            // float rotation_const = -1.0 * world_angle - 3.0*M_PI / 2.0;
 
             // avoid allocation on every loop iteration
             float x_world;
@@ -611,20 +635,30 @@ namespace ranges {
                 x_world = ins[i*3];
                 y_world = ins[i*3+1];
                 theta_world = ins[i*3+2];
-                printf("(x,y,theta) in world = (%f, %f, %f)\n", x_world, y_world, theta_world);
-                theta = -theta_world + rotation_const;
+                /*
+                  @fix
+                 * conversion of theta from world to grid
+                 */
+                //theta = -theta_world + rotation_const;
+                theta = theta_world - world_angle;
 
                 x = (x_world - world_origin_x) * inv_world_scale;
                 y = (y_world - world_origin_y) * inv_world_scale;
                 temp = x;
+                /*
+                  @fix
+                 * Rotation of -world_angle
+                 */
                 // x = world_cos_angle*x - world_sin_angle*y;
                 // y = world_sin_angle*temp + world_cos_angle*y;
                 x = world_cos_angle*x + world_sin_angle*y;
                 y = - world_sin_angle*temp + world_cos_angle*y;
-                printf("(x,y,theta) in map = (%f, %f, %f)\n", x, y, theta);
 
                 for (int a = 0; a < num_angles; ++a){
-                    printf("calc_range(%f, %f, %f) = %f\n", x, y, theta - angles[a], calc_range(x, y, theta - angles[a]));
+                    /*
+                      @fix
+                     * No need to switch x and y
+                     */
                     // outs[i*num_angles+a] = calc_range(y, x, theta - angles[a]) * world_scale;
                     outs[i*num_angles+a] = calc_range(x, y, theta - angles[a]) * world_scale;
                 }
@@ -668,6 +702,9 @@ namespace ranges {
 
         // calc range for each pose, adding every angle, evaluating the sensor model
         void calc_range_repeat_angles_eval_sensor_model(float * ins, float * angles, float * obs, double * weights, int num_particles, int num_angles) {
+            std::cout << "Do not call calc_range_repeat_angles_eval_sensor_model";
+            std::cout << " until the algorithm is verified" << std::endl;
+            return ;
 #if ROS_WORLD_TO_GRID_CONVERSION == 1
             // cache these constants on the stack for efficiency
             float inv_world_scale = 1.0 / map.world_scale;
@@ -1069,23 +1106,11 @@ namespace ranges {
 
             float ray_direction_x = cosf(heading);
             float ray_direction_y = sinf(heading);
-            printf("Direction: %f, %f\n", ray_direction_x, ray_direction_y);
 
             int px = 0;
             int py = 0;
 
             float t = 0.0;
-            // printf("Preview distImage\n");
-            // for (int j = 950; j < 1020; j++){
-            //     //printf("%4d:  ", j);
-            //     for (int i = 100; i < 1200; i++){
-            //         distImage.grid[i][j] = 0.0;
-            //         //printf("%.2f  ", distImage.get(i,j));
-            //     }
-            //     //printf("\n");
-            // }
-            // printf("width is %d, height is %d\n", map.width, map.height);
-            // distImage.save("/home/lixun/disImage.png");
             while (t < max_range) {
                 px = x0 + ray_direction_x * t;
                 py = y0 + ray_direction_y * t;
@@ -1095,8 +1120,6 @@ namespace ranges {
                 }
 
                 float d = distImage.get(px, py);
-                printf("At (%d, %d) d is %f\n", px, py, d);
-
 #if _MAKE_TRACE_MAP == 1
                 map.isOccupied(px,py); // this makes a dot appear in the trace map
 #endif
@@ -1104,7 +1127,6 @@ namespace ranges {
                 if (d <= distThreshold) {
                     float xd = px - x0;
                     float yd = py - y0;
-                    printf("result: %f\n",sqrtf(xd*xd + yd*yd));
                     return sqrtf(xd*xd + yd*yd);
                 }
 
@@ -1129,7 +1151,7 @@ namespace ranges {
             float world_origin_y = map.world_origin_y;
             float world_sin_angle = map.world_sin_angle;
             float world_cos_angle = map.world_cos_angle;
-            float rotation_const = -1.0 * world_angle - 3.0*M_PI / 2.0;
+            //float rotation_const = -1.0 * world_angle - 3.0*M_PI / 2.0;
 
             /* avoid allocation on every loop iteration */
             float x_world;
@@ -1142,30 +1164,45 @@ namespace ranges {
             double w;
             float r,d;
 
+            // printf("\n TESTING ...\n");
+            // for (int i = 0; i < num_angles; i++){
+            //     if (i!=0 && i %10 == 0) printf("\n");
+            //     printf("%.2f  ", obs[i]);
+            // }
+            // printf("\n");
+            // printf("\n TESTING ...\n");
             for (int i = 0; i < num_particles; i ++)
             {
                 x_world = px[i];
                 y_world = py[i];
                 theta_world = pangle[i];
-                theta = theta_world + rotation_const;
+                theta = theta_world - world_angle;
 
                 x = (x_world - world_origin_x) * inv_world_scale;
                 y = (y_world - world_origin_y) * inv_world_scale;
                 temp = x;
-                x = world_cos_angle*x - world_sin_angle*y;
-                y = world_sin_angle*temp + world_cos_angle*y;
+                x = world_cos_angle*x + world_sin_angle*y;
+                y = -world_sin_angle*temp + world_cos_angle*y;
+
 
                 w = 1.0;
+                double po = 1.0/2.2;
                 for (int a = 0; a < num_angles; a ++)
                 {
-                    d = calc_range(y, x, theta - angles[a]);
+                    d = calc_range(x, y, theta - angles[a]);
                     d = std::min<float>(std::max<float>(d,0.0),(float)sensor_model.size()-1.0);
+                    /* Need to convert range from world to map */
                     r = obs[a] * inv_world_scale;
                     r = std::min<float>(std::max<float>(r,0.0),(float)sensor_model.size()-1.0);
                     w *= sensor_model[(int)r][(int)d];
-                    //printf("%2d %2d: d (%f) r (%f)  %lf\n", i, a, d, r, sensor_model[(int)r][(int)d]);
+                    // if (a != 0 && a % 6 == 0)
+                    //     printf("\n");
+                    // printf("[%.2f %.2f <- %.2f %.3lf]  ", d, r, theta-angles[a], sensor_model[(int)r][(int)d]);
                 }
-                weights[i] = w;
+                //printf("\n");
+                weights[i] = pow(w, po);
+                //printf("Particle %2d: (%f, %f, %f) ==> (%f, %f, %f) ==> %e\n", i, x_world, y_world, theta_world, x, y, theta, weights[i]);
+
             }
         }
 
