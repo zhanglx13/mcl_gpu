@@ -1,9 +1,12 @@
 #include "mcl.h"
-#define _USE_MATH_DEFINES // for pi
+#define _USE_MATH_DEFINES // for pi ==> M_PI
 #include <numeric> // for transform_reduce
 
 
-MCL::MCL(ranges::OMap omap, float max_range_px): omap_(omap), rmgpu_ (omap, max_range_px), rm_ (omap, max_range_px)
+MCL::MCL(ranges::OMap omap, float max_range_px):
+    omap_(omap),
+    rmgpu_ (omap, max_range_px),
+    rm_ (omap, max_range_px)
 {
     ros::NodeHandle private_nh_("~");
     private_nh_.getParam("angle_step", p_angle_step_);
@@ -21,7 +24,6 @@ MCL::MCL(ranges::OMap omap, float max_range_px): omap_(omap), rmgpu_ (omap, max_
 
     private_nh_.param("scan_topic", p_scan_topic_, std::string("scan"));
     private_nh_.param("odometry_topic", p_odom_topic_, std::string("odom"));
-    //private_nh_.param("max_range", p_max_range_meters_, 30.0f);
 
     private_nh_.param("z_short", p_z_short_, 0.01f);
     private_nh_.param("z_max", p_z_max_, 0.07f);
@@ -92,6 +94,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px): omap_(omap), rmgpu_ (omap, max_
 
 MCL::~MCL()
 {
+    free(particles_);
     ROS_INFO("All done, bye yo!!");
 }
 
@@ -116,7 +119,6 @@ void MCL::get_omap()
       */
     map_height_ = omap_.height;
     map_width_ = omap_.width;
-    //permissible_region_ = (char*) malloc(sizeof(char)*map_width_*map_height_);
     int count = 0;
     for (int row = 0; row < map_height_; row++)
     {
@@ -128,15 +130,12 @@ void MCL::get_omap()
                 cell_id[0] = col;
                 cell_id[1] = row;
                 free_cell_id_.push_back(cell_id);
-                //permissible_region_[row*map_width_ + col] = 1;
                 count ++;
             }
-            //else
-            //    permissible_region_[row*map_width_ + col] = 0;
         }
     }
-    ROS_INFO("Process omap and count is %d, which is %f", count, count*1.0 / (map_width_*map_height_));
-    ROS_INFO("Number of free cells in the map: %ld", free_cell_id_.size());
+    ROS_DEBUG("Process omap and count is %d, which is %f", count, count*1.0 / (map_width_*map_height_));
+    ROS_DEBUG("Number of free cells in the map: %ld", free_cell_id_.size());
     map_initialized_ = true;
 
 #if 0
@@ -191,7 +190,7 @@ void MCL::precompute_sensor_model()
         for (int r = 0 ; r < table_width; r++)
             sensor_model_table_[r * table_width + d] /= norm;
     }
-    /* Upload the sensor mode to RayMarchingGPU */
+    /* Upload the sensor mode to RayMarching Methods */
     if (!p_which_rm_.compare("rmgpu"))
         rmgpu_.set_sensor_model(sensor_model_table_, table_width);
     else if (!p_which_rm_.compare("rm"))
@@ -275,6 +274,7 @@ void MCL::initialize_global()
 #ifdef TESTING
     ROS_DEBUG("TESTING THE MCL_cpu() FUNCTION ... ");
     MCL_cpu();
+    publish_tf();
     visualize();
 #endif
 }
@@ -333,6 +333,23 @@ void MCL::odomCB(const nav_msgs::Odometry& msg)
 void MCL::pose_initCB(const geometry_msgs::PoseWithCovarianceStamped& msg)
 {
     ROS_INFO("initial pose set");
+    unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+    std::generate_n(particles_x_.begin(), p_max_particles_,
+                    [x=msg.pose.pose.position.x,
+                     distribution = std::normal_distribution<float>(0.0, 0.5),
+                     generator = std::default_random_engine(seed)] () mutable
+                        {return x + distribution(generator);});
+    std::generate_n(particles_y_.begin(), p_max_particles_,
+                    [y=msg.pose.pose.position.y,
+                     distribution = std::normal_distribution<float>(0.0, 0.5),
+                     generator = std::default_random_engine(seed)] () mutable
+                        {return y + distribution(generator);});
+    std::generate_n(particles_angle_.begin(), p_max_particles_,
+                    [angle=omap_.quaternion_to_angle(msg.pose.pose.orientation),
+                     distribution = std::normal_distribution<float>(0.0, 0.4),
+                     generator = std::default_random_engine(seed)] () mutable
+                        {return angle + distribution(generator);});
+    visualize();
 }
 void MCL::rand_initCB(const geometry_msgs::PointStamped& msg)
 {

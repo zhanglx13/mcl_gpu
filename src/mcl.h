@@ -32,7 +32,7 @@ public:
     void initialize_global();
 
     void update();
-    /* difference implementations of MCL algorithm */
+    /* different implementations of MCL algorithm */
     void MCL_cpu();
     void MCL_gpu();
     void MCL_adaptive();
@@ -116,15 +116,15 @@ protected:
      * Note that this is different from geometry_msgs::Pose in the way that
      * last_pose_[2] is the angle but geometry_msgs::Pose[2] is queternion.
      */
-    std::array<float, 3> last_pose_;
-    std::array<float, 3> inferred_pose_;
+    pose_t last_pose_;
+    pose_t inferred_pose_;
     /*
      * This is the difference between the newly received and the last odometry
      * in the car frame. There needs to be a conversion between the odom frame
      * to the car frame.
      * Note that the rotation is expressed as angle instead of quaternion
      */
-    std::array<float, 3> odometry_delta_ {0};
+    pose_t odometry_delta_ {0};
     ros::Time last_stamp_;
 
 
