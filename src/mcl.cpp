@@ -67,16 +67,12 @@ MCL::MCL(ranges::OMap omap, float max_range_px): omap_(omap), rmgpu_ (omap, max_
     particles_y_.resize(p_max_particles_);
     particles_angle_.resize(p_max_particles_);
 
-    /* initialize the state */
-    get_omap();
-    precompute_sensor_model();
-    initialize_global();
-
     /* these topics are for visualization */
-    pose_pub_      = node_.advertise<geometry_msgs::PoseStamped>("/pf/viz/inferred_pose", 1);
+    pose_pub_      = node_.advertise<geometry_msgs::PoseStamped>("/pf/viz/inferred_pose", 1, true);
     particle_pub_  = node_.advertise<geometry_msgs::PoseArray>("/pf/viz/particles", 1);
     fake_scan_pub_ = node_.advertise<sensor_msgs::LaserScan>("/pf/viz/fake_scan", 1);
     rect_pub_      = node_.advertise<geometry_msgs::PolygonStamped>("/pf/viz/poly1", 1);
+
 
     if (p_publish_odom_)
         odom_pub_ = node_.advertise<nav_msgs::Odometry>("/pf/pose/odom", 1);
@@ -85,6 +81,11 @@ MCL::MCL(ranges::OMap omap, float max_range_px): omap_(omap), rmgpu_ (omap, max_
     odom_sub_ = node_.subscribe(p_odom_topic_, 1, &MCL::odomCB, this);
     pose_sub_ = node_.subscribe("/initialpose", 1, &MCL::pose_initCB, this);
     click_sub_ = node_.subscribe("/clicked_point", 1, &MCL::rand_initCB, this);
+
+    /* initialize the state */
+    get_omap();
+    precompute_sensor_model();
+    initialize_global();
 
     ROS_INFO("Finished initializing, waiting on messages ...");
 }
@@ -271,11 +272,11 @@ void MCL::initialize_global()
     ROS_INFO("    Total %lf, rng %lf, shuffle %lf, forloop %lf",
              elapsedTime.toSec(), rngTime.toSec(), shuffleTime.toSec(), loopTime.toSec());
 
-    /*
-     * TESTING
-     */
-    ROS_INFO("TESTING THE MCL_cpu() FUNCTION ... ");
+#ifdef TESTING
+    ROS_DEBUG("TESTING THE MCL_cpu() FUNCTION ... ");
     MCL_cpu();
+    visualize();
+#endif
 }
 
 void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
@@ -428,7 +429,28 @@ void MCL::publish_tf()
 }
 
 void MCL::visualize()
-{}
+{
+    if (!p_do_viz_)
+        return;
+
+    /* publish the inferred pose */
+    geometry_msgs::Quaternion quat = tf::createQuaternionMsgFromYaw(inferred_pose_[2]);
+    geometry_msgs::PoseStamped ps;
+    ps.header.stamp = ros::Time::now();
+    ps.header.frame_id = "map";
+    ps.pose.position.x = inferred_pose_[0];
+    ps.pose.position.y = inferred_pose_[1];
+    ps.pose.position.z = 0.0;
+    ps.pose.orientation = quat;
+    //while(ros::ok()){
+        pose_pub_.publish(ps);
+        //  sleep(0.1);
+        //}
+
+    /* publish a downsampled version of the particles distribution */
+
+
+}
 
 void MCL::MCL_cpu()
 {
@@ -551,7 +573,7 @@ void MCL::MCL_cpu()
 
     /* Inferref pose */
     expected_pose();
-    ROS_DEBUG("Inferred posr: %f  %f  %f",
+    ROS_DEBUG("Inferred pose: %f  %f  %f",
              inferred_pose_[0], inferred_pose_[1], inferred_pose_[2]);
 }
 
