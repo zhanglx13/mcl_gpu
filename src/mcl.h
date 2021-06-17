@@ -59,6 +59,7 @@ protected:
     int p_theta_discretization_;
     std::string p_which_rm_;
     std::string p_which_impl_;
+    std::string p_which_viz_;
     int p_publish_odom_;
     int p_do_viz_;
 

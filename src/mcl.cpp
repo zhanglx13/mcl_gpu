@@ -19,6 +19,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     private_nh_.getParam("theta_discretization", p_theta_discretization_);
     private_nh_.param("which_rm", p_which_rm_, std::string("rmgpu"));
     private_nh_.param("which_impl", p_which_impl_, std::string("cpu"));
+    private_nh_.param("which_viz", p_which_viz_, std::string("largest"));
     private_nh_.param("publish_odom", p_publish_odom_, 1);
     private_nh_.getParam("viz", p_do_viz_);
 
@@ -53,6 +54,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     ROS_INFO("    max_range_px:          %d", p_max_range_px_);
 
     ROS_INFO("    which_impl:            %s", p_which_impl_.c_str());
+    ROS_INFO("    which_viz:             %s", p_which_viz_.c_str());
 
     lidar_initialized_ = 0;
     odom_initialized_ = 0;
@@ -274,7 +276,8 @@ void MCL::initialize_global()
 #ifdef TESTING
     ROS_DEBUG("TESTING THE MCL_cpu() FUNCTION ... ");
     MCL_cpu();
-    publish_tf();
+    expected_pose();
+    //publish_tf();
     visualize();
 #endif
 }
@@ -339,16 +342,21 @@ void MCL::pose_initCB(const geometry_msgs::PoseWithCovarianceStamped& msg)
                      distribution = std::normal_distribution<float>(0.0, 0.5),
                      generator = std::default_random_engine(seed)] () mutable
                         {return x + distribution(generator);});
+    seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::generate_n(particles_y_.begin(), p_max_particles_,
                     [y=msg.pose.pose.position.y,
                      distribution = std::normal_distribution<float>(0.0, 0.5),
                      generator = std::default_random_engine(seed)] () mutable
                         {return y + distribution(generator);});
+    seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::generate_n(particles_angle_.begin(), p_max_particles_,
                     [angle=omap_.quaternion_to_angle(msg.pose.pose.orientation),
                      distribution = std::normal_distribution<float>(0.0, 0.4),
                      generator = std::default_random_engine(seed)] () mutable
                         {return angle + distribution(generator);});
+    double w = 1.0 / p_max_particles_;
+    std::fill(weights_.begin(), weights_.end(), w);
+    expected_pose();
     visualize();
 }
 void MCL::rand_initCB(const geometry_msgs::PointStamped& msg)
@@ -462,6 +470,7 @@ void MCL::visualize()
     pose_pub_.publish(ps);
 
     /* publish a downsampled version of the particles distribution */
+#if 0
     if (p_max_particles_ > p_max_viz_particles_)
     {
         /* Choose p_max_viz_particles_ particle according to the weights */
@@ -473,10 +482,46 @@ void MCL::visualize()
     }
     else
         publish_particles(particles_x_, particles_y_, particles_angle_, p_max_particles_);
+#endif
+
+    int n = std::min(p_max_particles_, p_max_viz_particles_);
+    if (!p_which_viz_.compare("first"))
+    {
+        /*
+         * In this method, we simply publish the first n particles.
+         * We did not do a weight-based selection because we may only select a few particles given
+         * the weights are not normalized.
+         */
+        publish_particles(particles_x_, particles_y_, particles_angle_, n);
+    }
+    else if (!p_which_viz_.compare("largest"))
+    {
+        /*
+         * In this method, we publish the n particles with larger weights
+         * check https://stackoverflow.com/a/12399290
+         */
+        std::vector<int> idx (p_max_particles_);
+        std::iota(idx.begin(), idx.end(), 0);
+        stable_sort(idx.begin(), idx.end(),
+                    [this](int i1, int i2) { return weights_[i1] > weights_[i2];});
+        fvec_t px(n);
+        fvec_t py(n);
+        fvec_t pangle(n);
+
+        std::transform(idx.begin(), idx.begin()+n, px.begin(),
+                       [this](int index) {return particles_x_[index];});
+        std::transform(idx.begin(), idx.begin()+n, py.begin(),
+                       [this](int index) {return particles_y_[index];});
+        std::transform(idx.begin(), idx.begin()+n, pangle.begin(),
+                       [this](int index) {return particles_angle_[index];});
+
+        publish_particles(px, py, pangle, n);
+    }
 }
 
 void MCL::publish_particles(fvec_t px, fvec_t py, fvec_t pangle, int num_particles)
 {
+    ROS_DEBUG("Publishing %d particles", num_particles);
     geometry_msgs::PoseArray pa;
     pa.header.stamp = ros::Time::now();
     pa.header.frame_id = "map";
@@ -557,16 +602,16 @@ void MCL::MCL_cpu()
     std::copy(particles_y.begin(), particles_y.end(), particles_y_.begin());
     std::copy(particles_angle.begin(), particles_angle.end(), particles_angle_.begin());
 
-    ROS_DEBUG("Printing particles after resampling");
-    print_particles(10);
+    // ROS_DEBUG("Printing particles after resampling");
+    // print_particles(10);
 
     ROS_DEBUG("Odometry delta: %f  %f  %f",
              odometry_delta_[0], odometry_delta_[1], odometry_delta_[2]);
 
     /* Step 2: apply the motion model to the particles */
     motion_model();
-    ROS_DEBUG("Printing particles after motion model");
-    print_particles(10);
+    // ROS_DEBUG("Printing particles after motion model");
+    // print_particles(10);
 
 #ifdef TESTING
     /*
@@ -589,25 +634,25 @@ void MCL::MCL_cpu()
                                  downsampled_ranges_.data(), 1, num_angles);
 
     ROS_DEBUG("The chosen particles is %f  %f  %f", ins[0], ins[1], ins[2]);
-    for (int i=0; i<downsampled_ranges_.size(); i++){
-        if (i != 0 && i %6 == 0)
-            printf("\n");
-        printf("[%4.2f <- %4.2f]  ", downsampled_ranges_[i], ins[2]-omap_.world_angle - downsampled_angles_[i]);
-    }
-    printf("\n");
+    // for (int i=0; i<downsampled_ranges_.size(); i++){
+    //     if (i != 0 && i %6 == 0)
+    //         printf("\n");
+    //     printf("[%4.2f <- %4.2f]  ", downsampled_ranges_[i], ins[2]-omap_.world_angle - downsampled_angles_[i]);
+    // }
+    // printf("\n");
 #endif
     /* Step 3: apply the sensor model to compute the weights of particles */
 #ifdef TESTING
     /*
      * make the first particle exactly match the ins
      */
-    particles_x_[0] = ins[0];
-    particles_y_[0] = ins[1];
-    particles_angle_[0] = ins[2];
+    // particles_x_[0] = ins[0];
+    // particles_y_[0] = ins[1];
+    // particles_angle_[0] = ins[2];
 #endif
     sensor_model();
-    ROS_DEBUG("Printing particles after sensor model");
-    print_particles(10);
+    // ROS_DEBUG("Printing particles after sensor model");
+    // print_particles(10);
 
     /* Step 4: normalize the weights_  (but why?) */
     /*
@@ -665,6 +710,7 @@ void MCL::motion_model()
                     generator = std::default_random_engine(seed)]
                    (float x, float delta) mutable
                        {return x + delta + distribution(generator);});
+    seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::transform(particles_y_.begin(), particles_y_.end(),
                    local_deltas_y.begin(),
                    particles_y_.begin(),
@@ -672,6 +718,7 @@ void MCL::motion_model()
                     generator = std::default_random_engine(seed)]
                    (float y, float delta) mutable
                        {return y + delta + distribution(generator);});
+    seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::transform(particles_angle_.begin(), particles_angle_.end(),
                    particles_angle_.begin(),
                    [distribution = std::normal_distribution<float>(0.0, p_motion_dispersion_theta_),

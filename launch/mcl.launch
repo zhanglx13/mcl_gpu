@@ -10,6 +10,12 @@
                    - cpu: sequential implementation on CPU
                    - gpu: CUDA implementation on GPU
                    - adaptive: heterogeneous implementation on CPU + GPU
+       which_rm  : choose the implementation of the ray marching algorithm
+                   - rm: CPU implementation ==> RayMarching
+                   - rmgpu: GPU implementation ==> RayMarchingGPU
+       which_viz : choose which particles for visualization
+                   - first: select the first n particles in the population
+                   - largest: select the n particles with largest weights
   -->
   <arg name="scan_topic" default="/scan"/>
   <!-- <arg name="odometry_topic" default="/vesc/odom"/> -->
@@ -20,6 +26,9 @@
   <arg name="viz" default="1"/>
   <arg name="which_impl" default="cpu"/>
   <arg name="which_rm" default="rmgpu"/>
+  <arg name="which_viz" default="largest"/>
+
+  <node type="rviz" name="rviz" pkg="rviz" args="-d $(find mcl_gpu)/rviz/pf.rviz" />
 
   <node pkg="mcl_gpu" type="mcl_gpu" name="mcl_gpu" output="screen">
     <param name="which_rm" value="$(arg which_rm)"/>
