@@ -127,6 +127,7 @@ Useful Links: https://github.com/MRPT/mrpt/blob/4137046479222f3a71b5c00aee1d5fa8
 #endif
 
 typedef std::array<float, 3> pose_t;
+typedef std::vector<float> fvec_t;
 
 namespace ranges {
     struct OMap
@@ -979,9 +980,9 @@ namespace ranges {
          * This method uses one thread to do computation for one particle
          */
         void calc_range_eval_sensor_model_particle(
-            std::vector<float> px, std::vector<float> py, std::vector<float> pangle, // particles
-            std::vector<float> obs, // observation, i.e. downsampled_ranges_
-            std::vector<float> angles, // downsampled_angles_
+            fvec_t px, fvec_t py, fvec_t pangle, // particles
+            fvec_t obs, // observation, i.e. downsampled_ranges_
+            fvec_t angles, // downsampled_angles_
             std::vector<double> weights, // output, i.e. weight of each particle
             int num_particles,
             int num_angles // number of downsampled angles

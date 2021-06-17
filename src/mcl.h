@@ -44,6 +44,8 @@ public:
     void publish_tf();
 
     void visualize();
+    void publish_particles(fvec_t px, fvec_t py, fvec_t pangle, int num_particles);
+    void select_particles(fvec_t &px, fvec_t &py, fvec_t &pangle, int num_particles);
 
     void print_particles(int n);
 
@@ -141,15 +143,15 @@ protected:
     /* particles */
     std::vector<double> weights_;
     float * particles_;
-    std::vector<float> particles_x_;
-    std::vector<float> particles_y_;
-    std::vector<float> particles_angle_;
+    fvec_t particles_x_;
+    fvec_t particles_y_;
+    fvec_t particles_angle_;
 
     /* containers for range data */
-    std::vector<float> downsampled_ranges_;
-    std::vector<float> downsampled_angles_;
-    std::vector<float> viz_queries_;
-    std::vector<float> viz_ranges_;
+    fvec_t downsampled_ranges_;
+    fvec_t downsampled_angles_;
+    fvec_t viz_queries_;
+    fvec_t viz_ranges_;
 
 };
 

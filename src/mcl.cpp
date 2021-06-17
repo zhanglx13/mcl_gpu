@@ -69,7 +69,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px): omap_(omap), rmgpu_ (omap, max_
 
     /* these topics are for visualization */
     pose_pub_      = node_.advertise<geometry_msgs::PoseStamped>("/pf/viz/inferred_pose", 1, true);
-    particle_pub_  = node_.advertise<geometry_msgs::PoseArray>("/pf/viz/particles", 1);
+    particle_pub_  = node_.advertise<geometry_msgs::PoseArray>("/pf/viz/particles", 1, true);
     fake_scan_pub_ = node_.advertise<sensor_msgs::LaserScan>("/pf/viz/fake_scan", 1);
     rect_pub_      = node_.advertise<geometry_msgs::PolygonStamped>("/pf/viz/poly1", 1);
 
@@ -442,29 +442,79 @@ void MCL::visualize()
     ps.pose.position.y = inferred_pose_[1];
     ps.pose.position.z = 0.0;
     ps.pose.orientation = quat;
-    //while(ros::ok()){
-        pose_pub_.publish(ps);
-        //  sleep(0.1);
-        //}
+    pose_pub_.publish(ps);
 
     /* publish a downsampled version of the particles distribution */
+    if (p_max_particles_ > p_max_viz_particles_)
+    {
+        /* Choose p_max_viz_particles_ particle according to the weights */
+        fvec_t px;
+        fvec_t py;
+        fvec_t pangle;
+        select_particles(px, py, pangle, p_max_viz_particles_);
+        publish_particles(px, py, pangle, p_max_viz_particles_);
+    }
+    else
+        publish_particles(particles_x_, particles_y_, particles_angle_, p_max_particles_);
+}
 
+void MCL::publish_particles(fvec_t px, fvec_t py, fvec_t pangle, int num_particles)
+{
+    geometry_msgs::PoseArray pa;
+    pa.header.stamp = ros::Time::now();
+    pa.header.frame_id = "map";
+    pa.poses.resize(num_particles);
+    geometry_msgs::Quaternion quat;
+    for (int i = 0; i < num_particles; i++)
+    {
+        pa.poses[i].position.x = px[i];
+        pa.poses[i].position.y = py[i];
+        pa.poses[i].position.z = 0.0;
+        quat = tf::createQuaternionMsgFromYaw(pangle[i]);
+        pa.poses[i].orientation = quat;
+    }
+    particle_pub_.publish(pa);
+}
 
+/*
+ * Selects num_particles particles from the population according to their weights
+ */
+void MCL::select_particles(fvec_t &px, fvec_t &py, fvec_t &pangle, int num_particles)
+{
+    px.resize(num_particles);
+    py.resize(num_particles);
+    pangle.resize(num_particles);
+    /*
+     * https://stackoverflow.com/questions/42926209/equivalent-function-to-numpy-random-choice-in-c
+     * Use weights_ to construct a distribution
+     */
+    std::discrete_distribution<int> distribution(weights_.begin(), weights_.end());
+    /* vector used to hold indices of selected particles */
+    std::vector<int> indices;
+    indices.reserve(num_particles);
+    /* construct a trivial random generator engine from a time-based seed: */
+    unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+    /* use a generator lambda to draw random indices based on distribution */
+    std::generate_n(back_inserter(indices), num_particles,
+                    [distribution = std::move(distribution),
+                     generator = std::default_random_engine(seed)
+                        ]() mutable {return distribution(generator);});
+    /*
+     * Use indices to select particles
+     * Note that the lambda need to capture this to access member variables of MCL
+     * check: https://riptutorial.com/cplusplus/example/2461/class-lambdas-and-capture-of-this
+     */
+    std::transform(indices.begin(), indices.end(), px.begin(),
+                   [this](int index) {return particles_x_[index];});
+    std::transform(indices.begin(), indices.end(), py.begin(),
+                   [this](int index) {return particles_y_[index];});
+    std::transform(indices.begin(), indices.end(), pangle.begin(),
+                   [this](int index) {return particles_angle_[index];});
 }
 
 void MCL::MCL_cpu()
 {
     ROS_INFO("Calling MCL_cpu()");
-    /*
-     * step 1: Resampling using discrete distribution
-     */
-    /* temp local vectors used to resampling */
-    std::vector<float> particles_x;
-    std::vector<float> particles_y;
-    std::vector<float> particles_angle;
-    particles_x.resize(p_max_particles_);
-    particles_y.resize(p_max_particles_);
-    particles_angle.resize(p_max_particles_);
 #ifdef TESTING
     /*
      * Test the sensor model
@@ -475,34 +525,16 @@ void MCL::MCL_cpu()
     ins[1] = particles_y_[0];
     ins[2] = particles_angle_[0];
 #endif
-    /*
-     * https://stackoverflow.com/questions/42926209/equivalent-function-to-numpy-random-choice-in-c
-     * Use weights_ to construct a distribution
-     */
     ROS_DEBUG("Printing particles before resampling");
     print_particles(10);
-    std::discrete_distribution<int> distribution(weights_.begin(), weights_.end());
-    /* vector used to hold indices of selected particles */
-    std::vector<int> indices;
-    indices.reserve(p_max_particles_);
-    /* construct a trivial random generator engine from a time-based seed: */
-    unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
-    /* use a generator lambda to draw random indices based on distribution */
-    std::generate_n(back_inserter(indices), p_max_particles_,
-                    [distribution = std::move(distribution),
-                     generator = std::default_random_engine(seed)
-                        ]() mutable {return distribution(generator);});
     /*
-     * Use indices to select particles
-     * Note that the lambda need to capture this to access member variables of MCL
-     * check: https://riptutorial.com/cplusplus/example/2461/class-lambdas-and-capture-of-this
+     * step 1: Resampling using discrete distribution
      */
-    std::transform(indices.begin(), indices.end(), particles_x.begin(),
-                   [this](int index) {return particles_x_[index];});
-    std::transform(indices.begin(), indices.end(), particles_y.begin(),
-                   [this](int index) {return particles_y_[index];});
-    std::transform(indices.begin(), indices.end(), particles_angle.begin(),
-                   [this](int index) {return particles_angle_[index];});
+    /* temp local vectors used by resampling */
+    fvec_t particles_x;
+    fvec_t particles_y;
+    fvec_t particles_angle;
+    select_particles(particles_x, particles_y, particles_angle, p_max_particles_);
 
     std::copy(particles_x.begin(), particles_x.end(), particles_x_.begin());
     std::copy(particles_y.begin(), particles_y.end(), particles_y_.begin());
@@ -584,8 +616,8 @@ void MCL::MCL_adaptive(){}
 void MCL::motion_model()
 {
     /* rotate the action into the coordinate space of each particle */
-    std::vector<float> cosines;
-    std::vector<float> sines;
+    fvec_t cosines;
+    fvec_t sines;
     cosines.resize(p_max_particles_);
     sines.resize(p_max_particles_);
     std::transform(particles_angle_.begin(), particles_angle_.end(), cosines.begin(),
@@ -593,8 +625,8 @@ void MCL::motion_model()
     std::transform(particles_angle_.begin(), particles_angle_.end(), sines.begin(),
                    [](float theta) {return sin(theta);});
 
-    std::vector<float> local_deltas_x;
-    std::vector<float> local_deltas_y;
+    fvec_t local_deltas_x;
+    fvec_t local_deltas_y;
     local_deltas_x.resize(p_max_particles_);
     local_deltas_y.resize(p_max_particles_);
     std::transform(cosines.begin(), cosines.end(),
