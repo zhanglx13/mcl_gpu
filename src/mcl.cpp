@@ -20,6 +20,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     private_nh_.param("which_rm", p_which_rm_, std::string("rmgpu"));
     private_nh_.param("which_impl", p_which_impl_, std::string("cpu"));
     private_nh_.param("which_viz", p_which_viz_, std::string("largest"));
+    private_nh_.param("which_expect", p_which_expect_, std::string("largest"));
     private_nh_.param("publish_odom", p_publish_odom_, 1);
     private_nh_.getParam("viz", p_do_viz_);
 
@@ -72,8 +73,8 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     particles_angle_.resize(p_max_particles_);
 
     /* these topics are for visualization */
-    pose_pub_      = node_.advertise<geometry_msgs::PoseStamped>("/pf/viz/inferred_pose", 1, true);
-    particle_pub_  = node_.advertise<geometry_msgs::PoseArray>("/pf/viz/particles", 1, true);
+    pose_pub_      = node_.advertise<geometry_msgs::PoseStamped>("/pf/viz/inferred_pose", 1);
+    particle_pub_  = node_.advertise<geometry_msgs::PoseArray>("/pf/viz/particles", 1);
     fake_scan_pub_ = node_.advertise<sensor_msgs::LaserScan>("/pf/viz/fake_scan", 1);
     rect_pub_      = node_.advertise<geometry_msgs::PolygonStamped>("/pf/viz/poly1", 1);
 
@@ -303,6 +304,46 @@ void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
     lidar_initialized_ = 1;
 }
 
+void print_odom_msg(const nav_msgs::Odometry& msg)
+{
+    printf("header:\n");
+    printf("  seq: %d\n", msg.header.seq);
+    printf("  stamp:\n");
+    printf("    secs: %d\n", msg.header.stamp.sec);
+    printf("    nsecs: %d\n", msg.header.stamp.nsec);
+    printf("  frame_id: \"%s\"\n", msg.header.frame_id.c_str());
+    printf("child_frame_id: \"%s\"\n", msg.child_frame_id.c_str());
+    printf("pose:\n");
+    printf("  pose:\n");
+    printf("    position:\n");
+    printf("      x: %.16lf\n", msg.pose.pose.position.x);
+    printf("      y: %.16lf\n", msg.pose.pose.position.y);
+    printf("      z: %.16lf\n", msg.pose.pose.position.z);
+    printf("    orientation:\n");
+    printf("      x: %.16lf\n", msg.pose.pose.orientation.x);
+    printf("      y: %.16lf\n", msg.pose.pose.orientation.y);
+    printf("      z: %.16lf\n", msg.pose.pose.orientation.z);
+    printf("      w: %.16lf\n", msg.pose.pose.orientation.w);
+    printf("  covariance: [");
+    for (int i = 0; i < 36; i++) printf("0.0, ");
+    printf("]\n");
+
+    printf("twist:\n");
+    printf("  twist:\n");
+    printf("    linear:\n");
+    printf("      x: %.16lf\n", msg.twist.twist.linear.x);
+    printf("      y: %.16lf\n", msg.twist.twist.linear.y);
+    printf("      z: %.16lf\n", msg.twist.twist.linear.z);
+    printf("    angular:\n");
+    printf("      x: %.16lf\n", msg.twist.twist.angular.x);
+    printf("      y: %.16lf\n", msg.twist.twist.angular.y);
+    printf("      z: %.16lf\n", msg.twist.twist.angular.z);
+    printf("  covariance: [");
+    for (int i = 0; i < 36; i++) printf("0.0, ");
+    printf("]\n");
+    printf("---\n");
+}
+
 void MCL::odomCB(const nav_msgs::Odometry& msg)
 {
     pose_t pose;
@@ -328,6 +369,15 @@ void MCL::odomCB(const nav_msgs::Odometry& msg)
         odom_initialized_ = 1;
     last_pose_ = pose;
     last_stamp_ = msg.header.stamp;
+    // ROS_DEBUG("odom: %f  %f  %f  %f  %f", pose[0], pose[1], pose[2],
+    //          msg.pose.pose.orientation.z, msg.pose.pose.orientation.w);
+    // print_odom_msg(msg);
+    // printf("odometry delta:\n");
+    // printf("  x: %lf\n", odometry_delta_[0]);
+    // printf("  y: %lf\n", odometry_delta_[1]);
+    // printf("  a: %lf\n", odometry_delta_[2]);
+    // printf("world_angle: %f\n", omap_.world_angle);
+
 
     /* this topic is slower than lidar, so update every time we receive a message */
     update();
@@ -335,7 +385,9 @@ void MCL::odomCB(const nav_msgs::Odometry& msg)
 
 void MCL::pose_initCB(const geometry_msgs::PoseWithCovarianceStamped& msg)
 {
-    ROS_INFO("initial pose set");
+    ROS_INFO("initial pose set at %f %f %f",
+             msg.pose.pose.position.x, msg.pose.pose.position.y,
+             omap_.quaternion_to_angle(msg.pose.pose.orientation));
     unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::generate_n(particles_x_.begin(), p_max_particles_,
                     [x=msg.pose.pose.position.x,
@@ -393,7 +445,7 @@ void MCL::update()
         ros::Time t2 = ros::Time::now();
 
         /* publish transformation frame based on inferred pose */
-        publish_tf();
+        //publish_tf();
 
         /* seconds per iteration */
         ros::Duration spi = t2 - t1;
@@ -407,6 +459,8 @@ void MCL::update()
 
 void MCL::expected_pose()
 {
+    if (!p_which_expect_.compare("ave"))
+    {
     /*
       @note
       * std::transform_reduce requires c++17
@@ -417,6 +471,17 @@ void MCL::expected_pose()
                                               weights_.begin(), 0.0);
     inferred_pose_[2] = std::transform_reduce(particles_angle_.begin(), particles_angle_.end(),
                                               weights_.begin(), 0.0);
+    }
+    else if (!p_which_expect_.compare("largest"))
+    {
+        int maxPIdx = std::max_element(weights_.begin(), weights_.end()) - weights_.begin();
+        inferred_pose_[0] = particles_x_[maxPIdx];
+        inferred_pose_[1] = particles_y_[maxPIdx];
+        inferred_pose_[2] = particles_angle_[maxPIdx];
+    }
+    else
+        ROS_ERROR("Expect method %s not recognized!", p_which_expect_.c_str());
+
 }
 
 void MCL::publish_tf()
@@ -521,7 +586,6 @@ void MCL::visualize()
 
 void MCL::publish_particles(fvec_t px, fvec_t py, fvec_t pangle, int num_particles)
 {
-    ROS_DEBUG("Publishing %d particles", num_particles);
     geometry_msgs::PoseArray pa;
     pa.header.stamp = ros::Time::now();
     pa.header.frame_id = "map";
@@ -576,7 +640,7 @@ void MCL::select_particles(fvec_t &px, fvec_t &py, fvec_t &pangle, int num_parti
 
 void MCL::MCL_cpu()
 {
-    ROS_INFO("Calling MCL_cpu()");
+    //ROS_INFO("Calling MCL_cpu()");
 #ifdef TESTING
     /*
      * Test the sensor model
@@ -587,8 +651,8 @@ void MCL::MCL_cpu()
     ins[1] = particles_y_[0];
     ins[2] = particles_angle_[0];
 #endif
-    ROS_DEBUG("Printing particles before resampling");
-    print_particles(10);
+    //ROS_DEBUG("Printing particles before resampling");
+    //print_particles(10);
     /*
      * step 1: Resampling using discrete distribution
      */
@@ -605,8 +669,8 @@ void MCL::MCL_cpu()
     // ROS_DEBUG("Printing particles after resampling");
     // print_particles(10);
 
-    ROS_DEBUG("Odometry delta: %f  %f  %f",
-             odometry_delta_[0], odometry_delta_[1], odometry_delta_[2]);
+    //ROS_DEBUG("Odometry delta: %f  %f  %f",
+    //         odometry_delta_[0], odometry_delta_[1], odometry_delta_[2]);
 
     /* Step 2: apply the motion model to the particles */
     motion_model();
@@ -662,13 +726,13 @@ void MCL::MCL_cpu()
     double sum_weight = std::reduce(weights_.begin(), weights_.end(), 0.0);
     std::transform(weights_.begin(), weights_.end(), weights_.begin(),
                   [s = sum_weight](double w) {return w / s;});
-    ROS_DEBUG("Printing particles after normalizing");
-    print_particles(10);
+    //ROS_DEBUG("Printing particles after normalizing");
+    //print_particles(10);
 
     /* Inferref pose */
     expected_pose();
-    ROS_DEBUG("Inferred pose: %f  %f  %f",
-             inferred_pose_[0], inferred_pose_[1], inferred_pose_[2]);
+    //ROS_DEBUG("Inferred pose: %f  %f  %f",
+    //         inferred_pose_[0], inferred_pose_[1], inferred_pose_[2]);
 }
 
 void MCL::MCL_gpu(){}
@@ -678,19 +742,15 @@ void MCL::MCL_adaptive(){}
 void MCL::motion_model()
 {
     /* rotate the action into the coordinate space of each particle */
-    fvec_t cosines;
-    fvec_t sines;
-    cosines.resize(p_max_particles_);
-    sines.resize(p_max_particles_);
+    fvec_t cosines(p_max_particles_);
+    fvec_t sines(p_max_particles_);
     std::transform(particles_angle_.begin(), particles_angle_.end(), cosines.begin(),
                    [](float theta) {return cos(theta);});
     std::transform(particles_angle_.begin(), particles_angle_.end(), sines.begin(),
                    [](float theta) {return sin(theta);});
 
-    fvec_t local_deltas_x;
-    fvec_t local_deltas_y;
-    local_deltas_x.resize(p_max_particles_);
-    local_deltas_y.resize(p_max_particles_);
+    fvec_t local_deltas_x(p_max_particles_);
+    fvec_t local_deltas_y(p_max_particles_);
     std::transform(cosines.begin(), cosines.end(),
                    sines.begin(),
                    local_deltas_x.begin(),

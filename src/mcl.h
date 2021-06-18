@@ -60,6 +60,7 @@ protected:
     std::string p_which_rm_;
     std::string p_which_impl_;
     std::string p_which_viz_;
+    std::string p_which_expect_;
     int p_publish_odom_;
     int p_do_viz_;
 
@@ -104,14 +105,14 @@ protected:
     ranges::RayMarching rm_;
 
     /* internal state used by the MCL algorithm */
-    bool lidar_initialized_;
+    int lidar_initialized_;
     /*
      * 0: not receive any odom message yet
      * 1: received the first odom message
      * 2: odometry_delta_ is initialized
      */
-    bool odom_initialized_;
-    bool map_initialized_;
+    int odom_initialized_;
+    int map_initialized_;
 
     /*
      * Note that this is different from geometry_msgs::Pose in the way that
