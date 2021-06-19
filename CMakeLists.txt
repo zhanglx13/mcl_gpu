@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.3)
 project(mcl_gpu)
 
 ## TESTING mode
-add_definitions(-DTESTING)
+#add_definitions(-DTESTING)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++17)
