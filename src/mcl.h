@@ -48,6 +48,7 @@ public:
     void select_particles(fvec_t &px, fvec_t &py, fvec_t &pangle, int num_particles);
 
     void print_particles(int n);
+    void calc_range_one_pose(pose_t ins, fvec_t &ranges, bool printonly);
 
 protected:
     /* parameters */
@@ -120,6 +121,8 @@ protected:
      */
     pose_t last_pose_;
     pose_t inferred_pose_;
+    pose_t init_pose_;
+    int init_pose_set_;
     /*
      * This is the difference between the newly received and the last odometry
      * in the car frame. There needs to be a conversion between the odom frame

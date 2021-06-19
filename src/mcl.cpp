@@ -60,6 +60,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     lidar_initialized_ = 0;
     odom_initialized_ = 0;
     map_initialized_ = 0;
+    init_pose_set_ = 0;
 
     /*
      * Initialize particles and weights
@@ -301,6 +302,8 @@ void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
     /* down sample the range */
     for (int i = 0; i < num_ranges; i += p_angle_step_)
         downsampled_ranges_[i/p_angle_step_] = msg.ranges[i];
+    std::replace_if(downsampled_ranges_.begin(), downsampled_ranges_.end(),
+                    [](float range){return range > 10.0;}, 10.0);
     lidar_initialized_ = 1;
 }
 
@@ -385,6 +388,10 @@ void MCL::odomCB(const nav_msgs::Odometry& msg)
 
 void MCL::pose_initCB(const geometry_msgs::PoseWithCovarianceStamped& msg)
 {
+    init_pose_[0] = msg.pose.pose.position.x;
+    init_pose_[1] = msg.pose.pose.position.y;
+    init_pose_[2] = omap_.quaternion_to_angle(msg.pose.pose.orientation);
+    init_pose_set_ = 1;
     ROS_INFO("initial pose set at %f %f %f",
              msg.pose.pose.position.x, msg.pose.pose.position.y,
              omap_.quaternion_to_angle(msg.pose.pose.orientation));
@@ -640,17 +647,6 @@ void MCL::select_particles(fvec_t &px, fvec_t &py, fvec_t &pangle, int num_parti
 
 void MCL::MCL_cpu()
 {
-    //ROS_INFO("Calling MCL_cpu()");
-#ifdef TESTING
-    /*
-     * Test the sensor model
-     * Save the first particle as the true state
-     */
-    float ins[3];
-    ins[0] = particles_x_[0];
-    ins[1] = particles_y_[0];
-    ins[2] = particles_angle_[0];
-#endif
     //ROS_DEBUG("Printing particles before resampling");
     //print_particles(10);
     /*
@@ -669,9 +665,6 @@ void MCL::MCL_cpu()
     // ROS_DEBUG("Printing particles after resampling");
     // print_particles(10);
 
-    //ROS_DEBUG("Odometry delta: %f  %f  %f",
-    //         odometry_delta_[0], odometry_delta_[1], odometry_delta_[2]);
-
     /* Step 2: apply the motion model to the particles */
     motion_model();
     // ROS_DEBUG("Printing particles after motion model");
@@ -683,53 +676,66 @@ void MCL::MCL_cpu()
      * Since lidarCB is not called, so downsampled_ranges_ and downsampled_angles_
      * are not initialized. For testing purpose, we need to manually do so.
      */
-    float amin = -3.1415927410125732;
-    float amax = 3.1415927410125732;
-    float inc = 0.005823155865073204;
-    int num_angles = (amax - amin) / inc + 1;
-    num_angles /= p_angle_step_;
-    ROS_DEBUG("num_angles: %d", num_angles);
-    downsampled_angles_.resize(num_angles);
-    downsampled_ranges_.resize(num_angles);
-    for (int a = 0; a < num_angles; a++)
-        downsampled_angles_[a] = amin + a * inc * p_angle_step_;
+    // float amin = -3.1415927410125732;
+    // float amax = 3.1415927410125732;
+    // float inc = 0.005823155865073204;
+    // int num_angles = (amax - amin) / inc + 1;
+    // num_angles /= p_angle_step_;
+    // ROS_DEBUG("num_angles: %d", num_angles);
+    // downsampled_angles_.resize(num_angles);
+    // downsampled_ranges_.resize(num_angles);
+    // for (int a = 0; a < num_angles; a++)
+    //     downsampled_angles_[a] = amin + a * inc * p_angle_step_;
 
-    rm_.numpy_calc_range_angles (ins, downsampled_angles_.data(),
-                                 downsampled_ranges_.data(), 1, num_angles);
+    if (!init_pose_set_)
+    {
+        init_pose_[0] = 0.0;
+        init_pose_[1] = 0.0;
+        init_pose_[2] = 0.0;
+    }
+    fvec_t fake_ranges(downsampled_ranges_.size());
 
-    ROS_DEBUG("The chosen particles is %f  %f  %f", ins[0], ins[1], ins[2]);
-    // for (int i=0; i<downsampled_ranges_.size(); i++){
-    //     if (i != 0 && i %6 == 0)
-    //         printf("\n");
-    //     printf("[%4.2f <- %4.2f]  ", downsampled_ranges_[i], ins[2]-omap_.world_angle - downsampled_angles_[i]);
-    // }
-    // printf("\n");
+    printf("-----\n");
+    printf("ranges from init pose\n");
+    calc_range_one_pose(init_pose_, fake_ranges, false);
+
+    ROS_DEBUG("The chosen particles is %f  %f  %f", init_pose_[0], init_pose_[1], init_pose_[2]);
+    printf("ranges from simulator:\n");
+    calc_range_one_pose(init_pose_, downsampled_ranges_, true);
+
+    /*
+     * Put the init pose into the particles
+     */
+    particles_x_[99] = init_pose_[0];
+    particles_y_[99] = init_pose_[1];
+    particles_angle_[99] = init_pose_[2];
 #endif
     /* Step 3: apply the sensor model to compute the weights of particles */
-#ifdef TESTING
-    /*
-     * make the first particle exactly match the ins
-     */
-    // particles_x_[0] = ins[0];
-    // particles_y_[0] = ins[1];
-    // particles_angle_[0] = ins[2];
-#endif
     sensor_model();
     // ROS_DEBUG("Printing particles after sensor model");
     // print_particles(10);
+#ifdef TESTING
+    int maxPIdx = std::max_element(weights_.begin(), weights_.end()) - weights_.begin();
+    pose_t ins;
+    ins[0] = particles_x_[maxPIdx];
+    ins[1] = particles_y_[maxPIdx];
+    ins[2] = particles_angle_[maxPIdx];
+    printf("ranges from largest particle (%d)\n", maxPIdx);
+    calc_range_one_pose(ins, fake_ranges, false);
+#endif
 
     /* Step 4: normalize the weights_  (but why?) */
     /*
       @note
-     * std::reduce requires c++17
-     */
+      * std::reduce requires c++17
+      */
     double sum_weight = std::reduce(weights_.begin(), weights_.end(), 0.0);
     std::transform(weights_.begin(), weights_.end(), weights_.begin(),
-                  [s = sum_weight](double w) {return w / s;});
+                   [s = sum_weight](double w) {return w / s;});
     //ROS_DEBUG("Printing particles after normalizing");
     //print_particles(10);
 
-    /* Inferref pose */
+    /* Inferred pose */
     expected_pose();
     //ROS_DEBUG("Inferred pose: %f  %f  %f",
     //         inferred_pose_[0], inferred_pose_[1], inferred_pose_[2]);
@@ -821,8 +827,10 @@ void MCL::sensor_model()
             particles_x_.data(), particles_y_.data(), particles_angle_.data(),
             downsampled_ranges_.data(), downsampled_angles_.data(),
             weights_.data(),
-            p_max_particles_, (int)downsampled_angles_.size());
+            p_max_particles_, (int)downsampled_angles_.size(), p_inv_squash_factor_);
     }
+    else
+        ROS_ERROR("range method %s not recognized!", p_which_rm_.c_str());
 }
 
 void MCL::print_particles(int n)
@@ -831,4 +839,17 @@ void MCL::print_particles(int n)
         n = particles_x_.size();
     for (int i = 0; i < n; i ++)
         ROS_DEBUG("%3d:  %f  %f  %f\t(%e)", i, particles_x_[i], particles_y_[i], particles_angle_[i], weights_[i]);
+}
+
+void MCL::calc_range_one_pose(pose_t ins, fvec_t &ranges, bool printonly)
+{
+    if (!printonly)
+        rm_.numpy_calc_range_angles (ins.data(), downsampled_angles_.data(),
+                                     ranges.data(), 1, downsampled_angles_.size());
+    for (int i=0; i<downsampled_ranges_.size(); i++){
+        if (i != 0 && i %6 == 0)
+            printf("\n");
+        printf("[%5.2f <- %5.2f]  ", ranges[i], ins[2] + downsampled_angles_[i]);
+    }
+    printf("\n");
 }

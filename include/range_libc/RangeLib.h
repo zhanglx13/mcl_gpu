@@ -661,7 +661,7 @@ namespace ranges {
                      * No need to switch x and y
                      */
                     // outs[i*num_angles+a] = calc_range(y, x, theta - angles[a]) * world_scale;
-                    outs[i*num_angles+a] = calc_range(x, y, theta - angles[a]) * world_scale;
+                    outs[i*num_angles+a] = calc_range(x, y, theta + angles[a]) * world_scale;
                 }
             }
         }
@@ -1141,7 +1141,8 @@ namespace ranges {
             float *px, float *py, float *pangle,
             float *obs, float *angles,
             double *weights,
-            int num_particles, int num_angles
+            int num_particles, int num_angles,
+            double inv_squash_factor
             )
         {
             /* cache these constants on the stack for efficiency */
@@ -1165,13 +1166,6 @@ namespace ranges {
             double w;
             float r,d;
 
-            // printf("\n TESTING ...\n");
-            // for (int i = 0; i < num_angles; i++){
-            //     if (i!=0 && i %10 == 0) printf("\n");
-            //     printf("%.2f  ", obs[i]);
-            // }
-            // printf("\n");
-            // printf("\n TESTING ...\n");
             for (int i = 0; i < num_particles; i ++)
             {
                 x_world = px[i];
@@ -1187,23 +1181,16 @@ namespace ranges {
 
 
                 w = 1.0;
-                double po = 1.0/2.2;
                 for (int a = 0; a < num_angles; a ++)
                 {
-                    d = calc_range(x, y, theta - angles[a]);
+                    d = calc_range(x, y, theta + angles[a]);
                     d = std::min<float>(std::max<float>(d,0.0),(float)sensor_model.size()-1.0);
                     /* Need to convert range from world to map */
                     r = obs[a] * inv_world_scale;
                     r = std::min<float>(std::max<float>(r,0.0),(float)sensor_model.size()-1.0);
                     w *= sensor_model[(int)r][(int)d];
-                    // if (a != 0 && a % 6 == 0)
-                    //     printf("\n");
-                    // printf("[%.2f %.2f <- %.2f %.3lf]  ", d, r, theta-angles[a], sensor_model[(int)r][(int)d]);
                 }
-                //printf("\n");
-                weights[i] = pow(w, po);
-                //printf("Particle %2d: (%f, %f, %f) ==> (%f, %f, %f) ==> %e\n", i, x_world, y_world, theta_world, x, y, theta, weights[i]);
-
+                weights[i] = pow(w, inv_squash_factor);
             }
         }
 
