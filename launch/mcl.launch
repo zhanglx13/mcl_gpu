@@ -3,7 +3,7 @@
 <launch>
 
   <!-- For the mcl_gpu package to work, a map needs to be loaded first -->
-  <!-- <include file="$(find mcl_gpu)/launch/map_server.launch"/> -->
+  <include file="$(find mcl_gpu)/launch/map_server.launch"/>
 
   <!-- arguments
        which_impl: choose the implementation of the MCL algorithm

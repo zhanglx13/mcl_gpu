@@ -198,17 +198,22 @@ if (WITH_CUDA)
     include/range_libc/kernels.cu
     include/vendor/lodepng/lodepng.cpp)
 
+  CUDA_ADD_LIBRARY(cudaMCLLib ${LIB_TYPE}
+    src/mcl_gpu.cu)
+
   add_executable(mcl_gpu ${SRCS})
 
   target_link_libraries(mcl_gpu
     ${catkin_LIBRARIES}
     cudaRMLib
+    cudaMCLLib
     )
 
   add_dependencies(mcl_gpu
     ${${PROJECT_NAME}_EXPORTED_TARGETS}
     ${catkin_EXPORTED_TARGETS}
     cudaRMLib
+    cudaMCLLib
     )
 else()
   add_definitions(-DUSE_CUDA=0)

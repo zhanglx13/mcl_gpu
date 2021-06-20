@@ -3,6 +3,7 @@
 #include <numeric> // for transform_reduce
 
 
+
 MCL::MCL(ranges::OMap omap, float max_range_px):
     omap_(omap),
     rmgpu_ (omap, max_range_px),
@@ -93,6 +94,17 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     precompute_sensor_model();
     initialize_global();
 
+    /*
+     * Initialize the MCLGPU object
+     */
+    if (!p_which_impl_.compare("gpu")){
+        mclgpu_ = MCLGPU(p_max_particles_);
+        mclgpu_.init_constants(
+            /* motion model dispersion constants */
+            p_motion_dispersion_x_, p_motion_dispersion_y_, p_motion_dispersion_theta_);
+    }
+
+    MCL_gpu();
     ROS_INFO("Finished initializing, waiting on messages ...");
 }
 
@@ -274,14 +286,6 @@ void MCL::initialize_global()
 
     ROS_INFO("    Total %lf, rng %lf, shuffle %lf, forloop %lf",
              elapsedTime.toSec(), rngTime.toSec(), shuffleTime.toSec(), loopTime.toSec());
-
-#ifdef TESTING
-    ROS_DEBUG("TESTING THE MCL_cpu() FUNCTION ... ");
-    MCL_cpu();
-    expected_pose();
-    //publish_tf();
-    visualize();
-#endif
 }
 
 void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
@@ -741,7 +745,17 @@ void MCL::MCL_cpu()
     //         inferred_pose_[0], inferred_pose_[1], inferred_pose_[2]);
 }
 
-void MCL::MCL_gpu(){}
+void MCL::MCL_gpu()
+{
+    mclgpu_.update(
+        /* inputs */
+        /* particles */
+        particles_x_.data(), particles_y_.data(), particles_angle_.data(),
+        /* action, i.e. odometry_delta_ */
+        odometry_delta_.data(),
+        /* output */
+        weights_.data());
+}
 
 void MCL::MCL_adaptive(){}
 

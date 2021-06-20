@@ -13,6 +13,7 @@
 #include "tf/transform_broadcaster.h"
 
 #include "range_libc/RangeLib.h"
+#include "mcl_gpu.h"
 
 
 class MCL
@@ -104,6 +105,7 @@ protected:
 
     ranges::RayMarchingGPU rmgpu_;
     ranges::RayMarching rm_;
+    MCLGPU mclgpu_;
 
     /* internal state used by the MCL algorithm */
     int lidar_initialized_;
