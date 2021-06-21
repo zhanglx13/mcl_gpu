@@ -747,6 +747,9 @@ void MCL::MCL_cpu()
 
 void MCL::MCL_gpu()
 {
+
+    ROS_DEBUG("Printing particles before update");
+    print_particles(10);
     mclgpu_->update(
         /* inputs */
         /* particles */
@@ -755,6 +758,9 @@ void MCL::MCL_gpu()
         odometry_delta_.data(),
         /* output */
         weights_.data());
+
+    ROS_DEBUG("Printing particles after update");
+    print_particles(10);
 }
 
 void MCL::MCL_adaptive(){}

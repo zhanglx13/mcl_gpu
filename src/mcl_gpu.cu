@@ -35,17 +35,25 @@ __global__ void cuda_motion_sensor_model(
         printf("@@ Kernel <<<cuda_sensor_model>>> is called!\n");
         print_constants();
     }
+    if (p >= N) return;
     curandState localState = states[p];
+    float x     = particles[p];
+    float y     = particles[p + N];
     float angle = particles[p + N*2];
     /* apply motion model to each particle */
     float local_delta_x = cosf(angle) * odom_delta[0] - sinf(angle) * odom_delta[1];
     float local_delta_y = sinf(angle) * odom_delta[0] + cosf(angle) * odom_delta[1];
     float2 rnn2 = curand_normal2(&localState);
     float  rnn  = curand_normal(&localState);
-    particles[p]     += local_delta_x + rnn2.x * c_motion_dispersion_x;
-    particles[p+N]   += local_delta_y + rnn2.y * c_motion_dispersion_y;
-    particles[p+N*2] += angle +         rnn *    c_motion_dispersion_theta;
+    x += local_delta_x + rnn2.x * c_motion_dispersion_x;
+    y += local_delta_y + rnn2.y * c_motion_dispersion_y;
+    angle += rnn * c_motion_dispersion_theta;
 
+
+    /* update particles with new pose */
+    particles[p]     = x;
+    particles[p+N]   = y;
+    particles[p+N*2] = angle;
     states[p] = localState;
 }
 
@@ -89,7 +97,7 @@ void MCLGPU::update(float *px, float *py, float *pangle,
                     double *weights)
 {
     printf("## MCLGPU::update() called\n");
-    /* Copy data from host to device */
+    /* Copy particles from host to device */
     checkCUDAError(cudaMemcpy(d_particles_, px, sizeof(float)*np_, cudaMemcpyHostToDevice));
     checkCUDAError(cudaMemcpy(d_particles_+np_, py, sizeof(float)*np_, cudaMemcpyHostToDevice));
     checkCUDAError(cudaMemcpy(d_particles_+np_*2, pangle, sizeof(float)*np_, cudaMemcpyHostToDevice));
@@ -105,5 +113,10 @@ void MCLGPU::update(float *px, float *py, float *pangle,
 
     checkLastCUDAError_noAbort("cuda_motion_sensor_model");
 
+    /* copy weights back to host */
     checkCUDAError(cudaMemcpy(weights, d_weights_, sizeof(double)*np_, cudaMemcpyDeviceToHost));
+    /* copy particles back to host */
+    checkCUDAError(cudaMemcpy(px, d_particles_, sizeof(float)*np_, cudaMemcpyDeviceToHost));
+    checkCUDAError(cudaMemcpy(py, d_particles_+np_, sizeof(float)*np_, cudaMemcpyDeviceToHost));
+    checkCUDAError(cudaMemcpy(pangle, d_particles_+np_*2, sizeof(float)*np_, cudaMemcpyDeviceToHost));
 }
