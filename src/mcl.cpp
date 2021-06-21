@@ -98,8 +98,8 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
      * Initialize the MCLGPU object
      */
     if (!p_which_impl_.compare("gpu")){
-        mclgpu_ = MCLGPU(p_max_particles_);
-        mclgpu_.init_constants(
+        mclgpu_ = new MCLGPU(p_max_particles_);
+        mclgpu_->init_constants(
             /* motion model dispersion constants */
             p_motion_dispersion_x_, p_motion_dispersion_y_, p_motion_dispersion_theta_);
     }
@@ -747,7 +747,7 @@ void MCL::MCL_cpu()
 
 void MCL::MCL_gpu()
 {
-    mclgpu_.update(
+    mclgpu_->update(
         /* inputs */
         /* particles */
         particles_x_.data(), particles_y_.data(), particles_angle_.data(),

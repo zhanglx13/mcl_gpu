@@ -105,7 +105,7 @@ protected:
 
     ranges::RayMarchingGPU rmgpu_;
     ranges::RayMarching rm_;
-    MCLGPU mclgpu_;
+    MCLGPU *mclgpu_;
 
     /* internal state used by the MCL algorithm */
     int lidar_initialized_;
