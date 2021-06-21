@@ -9,7 +9,7 @@ class MCLGPU
 {
 public:
     MCLGPU(int num_particles);
-    MCLGPU(){printf("Default constructor of MCLGPU called\n");};
+    MCLGPU(){printf("Default constructor of MCLGPU called\n");}
     ~MCLGPU();
 
     void init_constants(float motion_dispersion_x, float motion_dispersion_y, float motion_dispersion_theta);
@@ -21,7 +21,7 @@ protected:
     int np_; // number of particles
     float *d_particles_;
     double *d_weights_;
-    curandState *d_states;
+    curandState *d_states_;
 };
 
 
