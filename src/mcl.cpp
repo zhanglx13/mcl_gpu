@@ -13,9 +13,9 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     private_nh_.getParam("angle_step", p_angle_step_);
     private_nh_.getParam("max_particles", p_max_particles_);
     private_nh_.getParam("max_viz_particles", p_max_viz_particles_);
-    float tmp;
+    double tmp;
     private_nh_.getParam("squash_factor", tmp);
-    p_inv_squash_factor_ = 1.0f / tmp;
+    p_inv_squash_factor_ = 1.0 / tmp;
     p_max_range_meters_ = max_range_px * omap.world_scale;
     private_nh_.getParam("theta_discretization", p_theta_discretization_);
     private_nh_.param("which_rm", p_which_rm_, std::string("rmgpu"));
@@ -44,7 +44,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     ROS_INFO("    Angle step:            %d", p_angle_step_);
     ROS_INFO("    Max particles:         %d", p_max_particles_);
     ROS_INFO("    Max viz particles:     %d", p_max_viz_particles_);
-    ROS_INFO("    Inv squash factor:     %f", p_inv_squash_factor_);
+    ROS_INFO("    Inv squash factor:     %lf", p_inv_squash_factor_);
     ROS_INFO("    Max range meters:      %f", p_max_range_meters_);
     ROS_INFO("    Theta discretization:  %d", p_theta_discretization_);
     ROS_INFO("    Range method:          %s", p_which_rm_.c_str());
@@ -94,17 +94,40 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     precompute_sensor_model();
     initialize_global();
 
+
+    /*
+     * For testing only, set fake downsampled angles
+     */
+    set_fake_angles_and_ranges(0);
+    /* end of testing code */
     /*
      * Initialize the MCLGPU object
      */
-    if (!p_which_impl_.compare("gpu")){
+    if (!p_which_impl_.compare("gpu"))
+    {
         mclgpu_ = new MCLGPU(p_max_particles_);
         mclgpu_->init_constants(
             /* motion model dispersion constants */
-            p_motion_dispersion_x_, p_motion_dispersion_y_, p_motion_dispersion_theta_);
+            p_motion_dispersion_x_, p_motion_dispersion_y_, p_motion_dispersion_theta_,
+            /* squash factor used for weight computation */
+            p_inv_squash_factor_);
+        mclgpu_->set_sensor_table(sensor_model_table_, p_max_range_px_ + 1);
+        mclgpu_->set_map(omap_, max_range_px);
+
+        /*
+         * For testing only, set fake downsampled angles
+         */
+        mclgpu_->set_angles(downsampled_angles_.data());
+        ROS_DEBUG("Testing MCL_gpu");
+        MCL_gpu();
+        /* end of testing code */
+    }
+    else if (!p_which_impl_.compare("cpu"))
+    {
+        ROS_DEBUG("Testing MCL_cpu");
+        MCL_cpu();
     }
 
-    MCL_gpu();
     ROS_INFO("Finished initializing, waiting on messages ...");
 }
 
@@ -294,6 +317,11 @@ void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
     float amax = msg.angle_max;
     float inc  = msg.angle_increment;
     int num_ranges = (amax - amin) / inc + 1;
+    if (NUM_ANGLES != num_ranges)
+    {
+        ROS_ERROR("Need to reset NUM_ANGLES to %d in CMakeLists.txt", num_ranges);
+        ros::shutdown();
+    }
     if (!lidar_initialized_)
     {
         int num_ranges_downsampled = num_ranges / p_angle_step_;
@@ -301,7 +329,7 @@ void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
         downsampled_angles_.resize(num_ranges_downsampled);
         for (int i = 0; i < num_ranges_downsampled; i ++)
             downsampled_angles_[i] = amin + i * p_angle_step_ * inc;
-
+        mclgpu_->set_angles(downsampled_angles_.data());
     }
     /* down sample the range */
     for (int i = 0; i < num_ranges; i += p_angle_step_)
@@ -755,7 +783,7 @@ void MCL::MCL_gpu()
         /* particles */
         particles_x_.data(), particles_y_.data(), particles_angle_.data(),
         /* action, i.e. odometry_delta_ */
-        odometry_delta_.data(),
+        odometry_delta_.data(), downsampled_ranges_.data(), (int)downsampled_ranges_.size(),
         /* output */
         weights_.data());
 
@@ -872,4 +900,33 @@ void MCL::calc_range_one_pose(pose_t ins, fvec_t &ranges, bool printonly)
         printf("[%5.2f <- %5.2f]  ", ranges[i], ins[2] + downsampled_angles_[i]);
     }
     printf("\n");
+}
+
+/* set fake angles and ranges according particle pidx */
+void MCL::set_fake_angles_and_ranges(int pidx)
+{
+    float amin = -3.1415927410125732;
+    float amax = 3.1415927410125732;
+    float inc = 0.005823155865073204;
+    int num_angles = (amax - amin) / inc + 1;
+    num_angles /= p_angle_step_;
+    if (num_angles != NUM_ANGLES){
+        ROS_ERROR("NUM_ANGLES needs to be set to %d in CMakeLists.txt", num_angles);
+        ros::shutdown();
+    }
+    ROS_DEBUG("num_angles: %d", num_angles);
+    downsampled_angles_.resize(num_angles);
+    downsampled_ranges_.resize(num_angles);
+    for (int a = 0; a < num_angles; a++)
+        downsampled_angles_[a] = amin + a * inc * p_angle_step_;
+    if (!p_which_impl_.compare("gpu"))
+        mclgpu_->set_angles(downsampled_angles_.data());
+
+    /* generate fake downsampled ranges */
+    pose_t ins;
+    ins[0] = particles_x_[pidx];
+    ins[1] = particles_y_[pidx];
+    ins[2] = particles_angle_[pidx];
+    rm_.numpy_calc_range_angles (ins.data(), downsampled_angles_.data(),
+                                 downsampled_ranges_.data(), 1, downsampled_angles_.size());
 }

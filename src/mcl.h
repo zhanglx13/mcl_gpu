@@ -48,15 +48,17 @@ public:
     void publish_particles(fvec_t px, fvec_t py, fvec_t pangle, int num_particles);
     void select_particles(fvec_t &px, fvec_t &py, fvec_t &pangle, int num_particles);
 
+    /* For debugging and testing */
     void print_particles(int n);
     void calc_range_one_pose(pose_t ins, fvec_t &ranges, bool printonly);
+    void set_fake_angles_and_ranges(int pidx);
 
 protected:
     /* parameters */
     int p_angle_step_;
     int p_max_particles_;
     int p_max_viz_particles_;
-    float p_inv_squash_factor_;
+    double p_inv_squash_factor_;
     float p_max_range_meters_;
     int p_theta_discretization_;
     std::string p_which_rm_;
