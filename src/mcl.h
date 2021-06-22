@@ -40,6 +40,7 @@ public:
 
     void motion_model();
     void sensor_model();
+    void resampling();
 
     void expected_pose();
     void publish_tf();

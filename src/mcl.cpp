@@ -679,46 +679,17 @@ void MCL::select_particles(fvec_t &px, fvec_t &py, fvec_t &pangle, int num_parti
 
 void MCL::MCL_cpu()
 {
-    //ROS_DEBUG("Printing particles before resampling");
-    //print_particles(10);
-    /*
-     * step 1: Resampling using discrete distribution
-     */
-    /* temp local vectors used by resampling */
-    fvec_t particles_x;
-    fvec_t particles_y;
-    fvec_t particles_angle;
-    select_particles(particles_x, particles_y, particles_angle, p_max_particles_);
+    /*************************************************
+     * Step 1: Resampling using discrete_distribution
+     *************************************************/
+    resampling();
 
-    std::copy(particles_x.begin(), particles_x.end(), particles_x_.begin());
-    std::copy(particles_y.begin(), particles_y.end(), particles_y_.begin());
-    std::copy(particles_angle.begin(), particles_angle.end(), particles_angle_.begin());
-
-    // ROS_DEBUG("Printing particles after resampling");
-    // print_particles(10);
-
-    /* Step 2: apply the motion model to the particles */
+    /***************************************************
+     * Step 2: apply the motion model to the particles
+     ***************************************************/
     motion_model();
-    // ROS_DEBUG("Printing particles after motion model");
-    // print_particles(10);
 
 #ifdef TESTING
-    /*
-     * make a fake downsampled_ranges_ and downsampled_angles_
-     * Since lidarCB is not called, so downsampled_ranges_ and downsampled_angles_
-     * are not initialized. For testing purpose, we need to manually do so.
-     */
-    // float amin = -3.1415927410125732;
-    // float amax = 3.1415927410125732;
-    // float inc = 0.005823155865073204;
-    // int num_angles = (amax - amin) / inc + 1;
-    // num_angles /= p_angle_step_;
-    // ROS_DEBUG("num_angles: %d", num_angles);
-    // downsampled_angles_.resize(num_angles);
-    // downsampled_ranges_.resize(num_angles);
-    // for (int a = 0; a < num_angles; a++)
-    //     downsampled_angles_[a] = amin + a * inc * p_angle_step_;
-
     if (!init_pose_set_)
     {
         init_pose_[0] = 0.0;
@@ -742,10 +713,12 @@ void MCL::MCL_cpu()
     particles_y_[99] = init_pose_[1];
     particles_angle_[99] = init_pose_[2];
 #endif
-    /* Step 3: apply the sensor model to compute the weights of particles */
+
+    /*********************************************************************
+     * Step 3: apply the sensor model to compute the weights of particles
+     *********************************************************************/
     sensor_model();
-    // ROS_DEBUG("Printing particles after sensor model");
-    // print_particles(10);
+
 #ifdef TESTING
     int maxPIdx = std::max_element(weights_.begin(), weights_.end()) - weights_.begin();
     pose_t ins;
@@ -756,7 +729,9 @@ void MCL::MCL_cpu()
     calc_range_one_pose(ins, fake_ranges, false);
 #endif
 
-    /* Step 4: normalize the weights_  (but why?) */
+    /*********************************************
+     * Step 4: normalize the weights_  (but why?)
+     *********************************************/
     /*
       @note
       * std::reduce requires c++17
@@ -764,20 +739,20 @@ void MCL::MCL_cpu()
     double sum_weight = std::reduce(weights_.begin(), weights_.end(), 0.0);
     std::transform(weights_.begin(), weights_.end(), weights_.begin(),
                    [s = sum_weight](double w) {return w / s;});
-    //ROS_DEBUG("Printing particles after normalizing");
-    //print_particles(10);
-
-    /* Inferred pose */
-    expected_pose();
-    //ROS_DEBUG("Inferred pose: %f  %f  %f",
-    //         inferred_pose_[0], inferred_pose_[1], inferred_pose_[2]);
 }
 
 void MCL::MCL_gpu()
 {
+    /***************************************************
+     * step 1: Resampling
+     * using std::discrete_distribution
+     ***************************************************/
+    resampling();
 
-    ROS_DEBUG("Printing particles before update");
-    print_particles(10);
+    /********************************************************************************
+     * step 2: apply motion model to advance the particles and compute their weights
+     * All done on GPU
+     ********************************************************************************/
     mclgpu_->update(
         /* inputs */
         /* particles */
@@ -787,8 +762,12 @@ void MCL::MCL_gpu()
         /* output */
         weights_.data());
 
-    ROS_DEBUG("Printing particles after update");
-    print_particles(10);
+    /*********************************
+     * Step 3: normalize the weights
+     *********************************/
+    double sum_weight = std::reduce(weights_.begin(), weights_.end(), 0.0);
+    std::transform(weights_.begin(), weights_.end(), weights_.begin(),
+                   [s = sum_weight](double w) {return w / s;});
 }
 
 void MCL::MCL_adaptive(){}
@@ -879,6 +858,18 @@ void MCL::sensor_model()
     }
     else
         ROS_ERROR("range method %s not recognized!", p_which_rm_.c_str());
+}
+
+void MCL::resampling()
+{
+    /* temp local vectors used by resampling */
+    fvec_t particles_x;
+    fvec_t particles_y;
+    fvec_t particles_angle;
+    select_particles(particles_x, particles_y, particles_angle, p_max_particles_);
+
+    std::copy(particles_x.begin(), particles_x.end(), particles_x_.begin());
+    std::copy(particles_y.begin(), particles_y.end(), particles_y_.begin());
 }
 
 void MCL::print_particles(int n)
