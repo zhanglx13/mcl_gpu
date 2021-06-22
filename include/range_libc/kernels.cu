@@ -204,7 +204,7 @@ __global__ void cuda_ray_marching_particle_world_to_grid(
     for (int ai = 0; ai < num_angles; ai ++)
     {
         /* Step 3: Add angles to theta to make an array of range requests */
-        float theta = theta_world - world_angle - angles[ai];
+        float theta = theta_world - world_angle + angles[ai];
         /* Step 4: Compute the range for each request */
         float d = calc_range(x0, y0, theta, distMap, width, height, max_range);
         /* Step 5: Evaluate each request using the sensor table */
