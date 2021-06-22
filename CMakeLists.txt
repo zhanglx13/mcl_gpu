@@ -4,6 +4,8 @@ project(mcl_gpu)
 ## TESTING mode
 #add_definitions(-DTESTING)
 
+add_definitions(-DNUM_ANGLES=60)
+
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++17)
 
@@ -191,7 +193,7 @@ if (WITH_CUDA)
   ## - https://answers.ros.org/question/304782/compile-cuda-into-ros-code-in-tegra/
   ##
   find_package(CUDA REQUIRED)
-  SET(CUDA_NVCC_FLAGS "-arch=sm_61" CACHE STRING "nvcc flags" FORCE)
+  SET(CUDA_NVCC_FLAGS "-arch=sm_35" CACHE STRING "nvcc flags" FORCE)
   SET(CUDA_VERBOSE_BUILD ON CACHE BOOL "nvcc verbose" FORCE)
   SET(LIB_TYPE STATIC)
   CUDA_ADD_LIBRARY(cudaRMLib ${LIB_TYPE}
