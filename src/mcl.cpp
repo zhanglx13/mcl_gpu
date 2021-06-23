@@ -7,7 +7,9 @@
 MCL::MCL(ranges::OMap omap, float max_range_px):
     omap_(omap),
     rmgpu_ (omap, max_range_px),
-    rm_ (omap, max_range_px)
+    rm_ (omap, max_range_px),
+    timer_ (Utils::Timer(10)),
+    smoothing_ (Utils::CircularArray(10))
 {
     ros::NodeHandle private_nh_("~");
     private_nh_.getParam("angle_step", p_angle_step_);
@@ -484,6 +486,7 @@ void MCL::update()
 {
     if (lidar_initialized_ && odom_initialized_ == 2 && map_initialized_)
     {
+        timer_.tick();
         ros::Time t1 = ros::Time::now();
         /*
          * one step of MCL algorithm:
@@ -513,9 +516,11 @@ void MCL::update()
         ros::Duration spi = t2 - t1;
         /* iterations per second */
         double ips = 1.0 / spi.toSec();
+        smoothing_.append(spi.toSec());
 
-        printf("iter %3d: %lf secs ---> %f  %f  %f\n", iter_, spi.toSec(),
-               inferred_pose_[0], inferred_pose_[1], inferred_pose_[2]);
+        if (iter_ != 0 && iter_ %10 == 0)
+            printf("iter %3d: %f s (%f ms) ---> (%f  %f  %f)\n", iter_, smoothing_.mean(), timer_.fps(),
+                   inferred_pose_[0], inferred_pose_[1], inferred_pose_[2]);
         iter_ ++;
 
         visualize();

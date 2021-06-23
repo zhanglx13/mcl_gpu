@@ -14,6 +14,8 @@
 
 #include "range_libc/RangeLib.h"
 #include "mcl_gpu.h"
+#include "timer.h"
+
 
 
 class MCL
@@ -166,7 +168,8 @@ protected:
 
     /* info of each iteration of the MCL algorithm */
     int iter_;
-
+    Utils::Timer timer_;
+    Utils::CircularArray smoothing_;
 };
 
 #endif

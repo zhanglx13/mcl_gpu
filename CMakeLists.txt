@@ -175,6 +175,7 @@ include_directories(
 file(GLOB SRCS
   src/main.cpp
   src/mcl.cpp
+  src/timer.cpp
   )
 
 if (WITH_CUDA)
