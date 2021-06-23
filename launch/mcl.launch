@@ -5,6 +5,9 @@
   <!-- For the mcl_gpu package to work, a map needs to be loaded first -->
   <include file="$(find mcl_gpu)/launch/map_server.launch"/>
 
+  <!-- Launch the racecar model -->
+  <include file="$(find f1tenth_simulator)/launch/racecar_model.launch"/>
+
   <!-- arguments
        which_impl: choose the implementation of the MCL algorithm
                    - cpu: sequential implementation on CPU
