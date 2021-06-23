@@ -422,15 +422,6 @@ void MCL::odomCB(const nav_msgs::Odometry& msg)
         odom_initialized_ = 1;
     last_pose_ = pose;
     last_stamp_ = msg.header.stamp;
-    // ROS_DEBUG("odom: %f  %f  %f  %f  %f", pose[0], pose[1], pose[2],
-    //          msg.pose.pose.orientation.z, msg.pose.pose.orientation.w);
-    // print_odom_msg(msg);
-    // printf("odometry delta:\n");
-    // printf("  x: %lf\n", odometry_delta_[0]);
-    // printf("  y: %lf\n", odometry_delta_[1]);
-    // printf("  a: %lf\n", odometry_delta_[2]);
-    // printf("world_angle: %f\n", omap_.world_angle);
-
 
     /* this topic is slower than lidar, so update every time we receive a message */
     update();
@@ -519,8 +510,11 @@ void MCL::update()
         smoothing_.append(spi.toSec());
 
         if (iter_ != 0 && iter_ %10 == 0)
-            printf("iter %3d: %f s (%f ms) ---> (%f  %f  %f)\n", iter_, smoothing_.mean(), timer_.fps(),
-                   inferred_pose_[0], inferred_pose_[1], inferred_pose_[2]);
+
+            printf("iter %3d: %f s (%f ms) ---> error: (%f  %f  %f)\n", iter_, smoothing_.mean(), timer_.fps(),
+                   last_pose_[0] - inferred_pose_[0],
+                   last_pose_[1] - inferred_pose_[1],
+                   last_pose_[2] - inferred_pose_[2]);
         iter_ ++;
 
         visualize();
