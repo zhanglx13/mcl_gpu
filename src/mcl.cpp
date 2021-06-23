@@ -92,14 +92,24 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     /* initialize the state */
     get_omap();
     precompute_sensor_model();
-    initialize_global();
+    // initialize_global();
+    /*
+     * Initialize the particles around the origin
+     */
+    init_pose_[0] = 0.0f;
+    init_pose_[1] = 0.0f;
+    init_pose_[2] = 0.0f;
+    initialize_initpose();
 
 
+
+#ifdef TESTING
     /*
      * For testing only, set fake downsampled angles
      */
     set_fake_angles_and_ranges(0);
     /* end of testing code */
+#endif
     /*
      * Initialize the MCLGPU object
      */
@@ -113,7 +123,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
             p_inv_squash_factor_);
         mclgpu_->set_sensor_table(sensor_model_table_, p_max_range_px_ + 1);
         mclgpu_->set_map(omap_, max_range_px);
-
+#ifdef TESTING
         /*
          * For testing only, set fake downsampled angles
          */
@@ -121,12 +131,15 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
         ROS_DEBUG("Testing MCL_gpu");
         MCL_gpu();
         /* end of testing code */
+#endif
     }
+#ifdef TESTING
     else if (!p_which_impl_.compare("cpu"))
     {
         ROS_DEBUG("Testing MCL_cpu");
         MCL_cpu();
     }
+#endif
 
     ROS_INFO("Finished initializing, waiting on messages ...");
 }
@@ -317,19 +330,21 @@ void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
     float amax = msg.angle_max;
     float inc  = msg.angle_increment;
     int num_ranges = (amax - amin) / inc + 1;
-    if (NUM_ANGLES != num_ranges)
-    {
-        ROS_ERROR("Need to reset NUM_ANGLES to %d in CMakeLists.txt", num_ranges);
-        ros::shutdown();
-    }
+
     if (!lidar_initialized_)
     {
         int num_ranges_downsampled = num_ranges / p_angle_step_;
+        if (NUM_ANGLES != num_ranges_downsampled)
+        {
+            ROS_ERROR("Need to reset NUM_ANGLES to %d in CMakeLists.txt", num_ranges_downsampled);
+            ros::shutdown();
+        }
         downsampled_ranges_.resize(num_ranges_downsampled);
         downsampled_angles_.resize(num_ranges_downsampled);
         for (int i = 0; i < num_ranges_downsampled; i ++)
             downsampled_angles_[i] = amin + i * p_angle_step_ * inc;
-        mclgpu_->set_angles(downsampled_angles_.data());
+        if (!p_which_impl_.compare("gpu"))
+            mclgpu_->set_angles(downsampled_angles_.data());
     }
     /* down sample the range */
     for (int i = 0; i < num_ranges; i += p_angle_step_)
@@ -424,32 +439,37 @@ void MCL::pose_initCB(const geometry_msgs::PoseWithCovarianceStamped& msg)
     init_pose_[1] = msg.pose.pose.position.y;
     init_pose_[2] = omap_.quaternion_to_angle(msg.pose.pose.orientation);
     init_pose_set_ = 1;
-    ROS_INFO("initial pose set at %f %f %f",
-             msg.pose.pose.position.x, msg.pose.pose.position.y,
-             omap_.quaternion_to_angle(msg.pose.pose.orientation));
+    ROS_INFO("initial pose set at %f %f %f", init_pose_[0], init_pose_[1], init_pose_[2]);
+    initialize_initpose();
+    expected_pose();
+    visualize();
+}
+
+/* Initialize the particles around the init_pose_ */
+void MCL::initialize_initpose()
+{
     unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::generate_n(particles_x_.begin(), p_max_particles_,
-                    [x=msg.pose.pose.position.x,
+                    [x=init_pose_[0],
                      distribution = std::normal_distribution<float>(0.0, 0.5),
                      generator = std::default_random_engine(seed)] () mutable
                         {return x + distribution(generator);});
     seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::generate_n(particles_y_.begin(), p_max_particles_,
-                    [y=msg.pose.pose.position.y,
+                    [y=init_pose_[1],
                      distribution = std::normal_distribution<float>(0.0, 0.5),
                      generator = std::default_random_engine(seed)] () mutable
                         {return y + distribution(generator);});
     seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::generate_n(particles_angle_.begin(), p_max_particles_,
-                    [angle=omap_.quaternion_to_angle(msg.pose.pose.orientation),
+                    [angle=init_pose_[2],
                      distribution = std::normal_distribution<float>(0.0, 0.4),
                      generator = std::default_random_engine(seed)] () mutable
                         {return angle + distribution(generator);});
     double w = 1.0 / p_max_particles_;
     std::fill(weights_.begin(), weights_.end(), w);
-    expected_pose();
-    visualize();
 }
+
 void MCL::rand_initCB(const geometry_msgs::PointStamped& msg)
 {
     ROS_INFO("clicked point set");

@@ -31,6 +31,7 @@ public:
     void get_omap();
     void precompute_sensor_model();
     void initialize_global();
+    void initialize_initpose();
 
     void update();
     /* different implementations of MCL algorithm */
