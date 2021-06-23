@@ -164,6 +164,9 @@ protected:
     fvec_t viz_queries_;
     fvec_t viz_ranges_;
 
+    /* info of each iteration of the MCL algorithm */
+    int iter_;
+
 };
 
 #endif

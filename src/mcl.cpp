@@ -102,7 +102,6 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     initialize_initpose();
 
 
-
 #ifdef TESTING
     /*
      * For testing only, set fake downsampled angles
@@ -279,7 +278,7 @@ void MCL::precompute_sensor_model()
 void MCL::initialize_global()
 {
     ROS_INFO("GLOBAL INITIALIZATION");
-    ros::WallTime start = ros::WallTime::now();
+    ros::Time start = ros::Time::now();
     /*
      * The following code generates random numbers between 0 and 1 uniformly
      * Check: https://www.delftstack.com/howto/cpp/cpp-random-number-between-0-and-1/
@@ -287,11 +286,11 @@ void MCL::initialize_global()
     unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::default_random_engine eng(seed);
     std::uniform_real_distribution<float> distr(0,1);
-    ros::WallTime spot1 = ros::WallTime::now();
+    ros::Time spot1 = ros::Time::now();
     /* First we shuffle the free_cell_ids */
     std::srand(std::time(0));
     std::random_shuffle(free_cell_id_.begin(), free_cell_id_.end());
-    ros::WallTime spot2 = ros::WallTime::now();
+    ros::Time spot2 = ros::Time::now();
     /* Then we use the first p_max_particles_ free_cell ids to initialize the particles */
     for (int p = 0 ; p < p_max_particles_; p++)
     {
@@ -314,14 +313,16 @@ void MCL::initialize_global()
         /* weights */
         weights_[p] = 1.0 / p_max_particles_;
     }
-    ros::WallTime end = ros::WallTime::now();
-    ros::WallDuration elapsedTime = end - start;
-    ros::WallDuration rngTime = spot1 - start;
-    ros::WallDuration shuffleTime = spot2 - spot1;
-    ros::WallDuration loopTime = end - spot2;
+    ros::Time end = ros::Time::now();
+    ros::Duration elapsedTime = end - start;
+    ros::Duration rngTime = spot1 - start;
+    ros::Duration shuffleTime = spot2 - spot1;
+    ros::Duration loopTime = end - spot2;
 
     ROS_INFO("    Total %lf, rng %lf, shuffle %lf, forloop %lf",
              elapsedTime.toSec(), rngTime.toSec(), shuffleTime.toSec(), loopTime.toSec());
+
+    iter_ = 0;
 }
 
 void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
@@ -468,6 +469,8 @@ void MCL::initialize_initpose()
                         {return angle + distribution(generator);});
     double w = 1.0 / p_max_particles_;
     std::fill(weights_.begin(), weights_.end(), w);
+
+    iter_ = 0;
 }
 
 void MCL::rand_initCB(const geometry_msgs::PointStamped& msg)
@@ -510,6 +513,10 @@ void MCL::update()
         ros::Duration spi = t2 - t1;
         /* iterations per second */
         double ips = 1.0 / spi.toSec();
+
+        printf("iter %3d: %lf secs ---> %f  %f  %f\n", iter_, spi.toSec(),
+               inferred_pose_[0], inferred_pose_[1], inferred_pose_[2]);
+        iter_ ++;
 
         visualize();
 
