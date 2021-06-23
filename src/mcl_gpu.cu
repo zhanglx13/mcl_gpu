@@ -111,10 +111,10 @@ __global__ void cuda_motion_sensor_model(
     int blocks, int lastBlockNotFull)
 {
     int p = threadIdx.x + blockIdx.x * blockDim.x;
-    if (p == 0) {
-        printf("@@ Kernel <<<cuda_sensor_model>>> is called! on %d threads per block\n", NUM_THREADS);
-        print_constants();
-    }
+    // if (p == 0) {
+    //     printf("@@ Kernel <<<cuda_sensor_model>>> is called! on %d threads per block\n", NUM_THREADS);
+    //     print_constants();
+    // }
     if (p >= N) return;
     curandState localState = states[p];
     float x     = particles[p];
@@ -130,7 +130,7 @@ __global__ void cuda_motion_sensor_model(
     float  rnn  = curand_normal(&localState);
     x += local_delta_x + rnn2.x * c_motion_dispersion_x;
     y += local_delta_y + rnn2.y * c_motion_dispersion_y;
-    angle += rnn * c_motion_dispersion_theta;
+    angle += rnn * c_motion_dispersion_theta + odom_delta[2];
 
     /************************************************
      * evaluate each particle with the sensor model
@@ -251,7 +251,7 @@ void MCLGPU::update(float *px, float *py, float *pangle,
                     float *odometry_delta, float *obs, int num_angles,
                     double *weights)
 {
-    printf("## MCLGPU::update() called\n");
+    //printf("## MCLGPU::update() called\n");
     /* Copy particles from host to device */
     checkCUDAError(cudaMemcpy(d_particles_, px, sizeof(float)*np_, cudaMemcpyHostToDevice));
     checkCUDAError(cudaMemcpy(d_particles_+np_, py, sizeof(float)*np_, cudaMemcpyHostToDevice));
