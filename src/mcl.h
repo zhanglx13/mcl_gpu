@@ -34,6 +34,8 @@ public:
     void precompute_sensor_model();
     void initialize_global();
     void initialize_initpose();
+    void initialize_acc();
+    void do_acc(float time_in_ms);
 
     void update();
     /* different implementations of MCL algorithm */
@@ -170,6 +172,10 @@ protected:
     int iter_;
     Utils::Timer timer_;
     Utils::CircularArray smoothing_;
+    float acc_error_x_;
+    float acc_error_y_;
+    float acc_error_angle_;
+    float acc_time_ms_;
 };
 
 #endif

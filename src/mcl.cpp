@@ -9,7 +9,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     rmgpu_ (omap, max_range_px),
     rm_ (omap, max_range_px),
     timer_ (Utils::Timer(10)),
-    smoothing_ (Utils::CircularArray(10))
+    smoothing_ (Utils::CircularArray(100))
 {
     ros::NodeHandle private_nh_("~");
     private_nh_.getParam("angle_step", p_angle_step_);
@@ -324,6 +324,16 @@ void MCL::initialize_global()
     ROS_INFO("    Total %lf, rng %lf, shuffle %lf, forloop %lf",
              elapsedTime.toSec(), rngTime.toSec(), shuffleTime.toSec(), loopTime.toSec());
 
+    initialize_acc();
+
+}
+
+void MCL::initialize_acc()
+{
+    acc_error_x_ = 0.0f;
+    acc_error_y_ = 0.0f;
+    acc_error_angle_ = 0.0f;
+    acc_time_ms_ = 0.0f;
     iter_ = 0;
 }
 
@@ -463,7 +473,7 @@ void MCL::initialize_initpose()
     double w = 1.0 / p_max_particles_;
     std::fill(weights_.begin(), weights_.end(), w);
 
-    iter_ = 0;
+    initialize_acc();
 }
 
 void MCL::rand_initCB(const geometry_msgs::PointStamped& msg)
@@ -505,21 +515,33 @@ void MCL::update()
 
         /* seconds per iteration */
         ros::Duration spi = t2 - t1;
-        /* iterations per second */
-        double ips = 1.0 / spi.toSec();
+
+        do_acc(spi.toSec()*1000.0);
+        iter_ ++;
         smoothing_.append(spi.toSec());
 
         if (iter_ != 0 && iter_ %10 == 0)
-
-            printf("iter %3d: %f s (%f ms) ---> error: (%f  %f  %f)\n", iter_, smoothing_.mean(), timer_.fps(),
-                   last_pose_[0] - inferred_pose_[0],
-                   last_pose_[1] - inferred_pose_[1],
-                   last_pose_[2] - inferred_pose_[2]);
-        iter_ ++;
+            printf("iter %3d: avg_acc_time %f ms (event time %f ms) ---> avg_acc_error: (%f  %f  %f)\n",
+                   iter_,
+                   //smoothing_.mean(),
+                   acc_time_ms_ / iter_,
+                   timer_.fps(),
+                   acc_error_x_ / iter_,
+                   acc_error_y_ / iter_,
+                   acc_error_angle_ / iter_
+                );
 
         visualize();
 
     }
+}
+
+void MCL::do_acc(float time_in_ms)
+{
+    acc_time_ms_ += time_in_ms;
+    acc_error_x_ += fabs(last_pose_[0] - inferred_pose_[0]);
+    acc_error_y_ += fabs(last_pose_[1] - inferred_pose_[1]);
+    acc_error_angle_ += fabs(last_pose_[2] - inferred_pose_[2]);
 }
 
 void MCL::expected_pose()
