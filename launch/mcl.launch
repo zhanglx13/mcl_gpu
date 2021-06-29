@@ -2,6 +2,41 @@
 
 <launch>
 
+    <!-- arguments
+       which_impl:    choose the implementation of the MCL algorithm
+                      - cpu: sequential implementation on CPU
+                      - gpu: CUDA implementation on GPU
+                      - adaptive: heterogeneous implementation on CPU + GPU
+       which_rm:      choose the implementation of the ray marching algorithm
+                      - rm: CPU implementation ==> RayMarching
+                      - rmgpu: GPU implementation ==> RayMarchingGPU
+       which_viz:     choose which particles for visualization
+                      - first: select the first n particles in the population
+                      - largest: select the n particles with largest weights
+       which_expect:  choose how to compute the expected pose from the population
+                      - largest: pick the particle with the largest weight
+                      - ave: compute the weighted average of all particles
+       squash_factor: used when computing weights of each particle. The weight w
+                      is transformed to pow(w, 1.0/squash_factor) so that we will
+                      not dealing with too small weight values.
+       viz:           control whether or not to publish inferred_pose and particles
+                      to /pf/viz/inferred_pose and /pf/viz/particles. This is also
+                      used to control whether to launch rviz for visualization.
+       bag:           control whether rosbag is launched to play messages
+  -->
+  <arg name="scan_topic" default="/scan"/>
+  <!-- <arg name="odometry_topic" default="/vesc/odom"/> -->
+  <arg name="odometry_topic" default="/odom"/>
+  <arg name="angle_step" default="18"/>
+  <arg name="max_particles" default="100"/>
+  <arg name="squash_factor" default="2.2"/>
+  <arg name="viz" default="1"/>
+  <arg name="bag" default="1"/>
+  <arg name="which_impl" default="cpu"/>
+  <arg name="which_rm" default="rm"/>
+  <arg name="which_viz" default="largest"/>
+  <arg name="which_expect" default="largest"/>
+
   <!-- For the mcl_gpu package to work, a map needs to be loaded first -->
   <include file="$(find mcl_gpu)/launch/map_server.launch"/>
 
@@ -31,35 +66,8 @@
   <node pkg="rosbag" type="play" name="player"
         args="--clock -r $(arg rate) -u $(arg duration) $(env HOME)/bags/$(arg bagfile).bag"
         required = "true"
-        launch-prefix="bash -c 'sleep $(arg delay); $0 $@' " />
-        <!-- output="screen"/> -->
-
-  <!-- arguments
-       which_impl: choose the implementation of the MCL algorithm
-                   - cpu: sequential implementation on CPU
-                   - gpu: CUDA implementation on GPU
-                   - adaptive: heterogeneous implementation on CPU + GPU
-       which_rm  : choose the implementation of the ray marching algorithm
-                   - rm: CPU implementation ==> RayMarching
-                   - rmgpu: GPU implementation ==> RayMarchingGPU
-       which_viz : choose which particles for visualization
-                   - first: select the first n particles in the population
-                   - largest: select the n particles with largest weights
-       which_expect: choose how to compute the expected pose from the population
-                   - largest: pick the particle with the largest weight
-                   - ave: compute the weighted average of all particles
-  -->
-  <arg name="scan_topic" default="/scan"/>
-  <!-- <arg name="odometry_topic" default="/vesc/odom"/> -->
-  <arg name="odometry_topic" default="/odom"/>
-  <arg name="angle_step" default="18"/>
-  <arg name="max_particles" default="10"/>
-  <arg name="squash_factor" default="2.2"/>
-  <arg name="viz" default="1"/>
-  <arg name="which_impl" default="cpu"/>
-  <arg name="which_rm" default="rm"/>
-  <arg name="which_viz" default="largest"/>
-  <arg name="which_expect" default="largest"/>
+        launch-prefix="bash -c 'sleep $(arg delay); $0 $@' "
+        if="$(eval arg('bag') == 1)"/>
 
   <!-- Launch the rviz node only when viz == 1 -->
   <node type="rviz" name="rviz" pkg="rviz" args="-d $(find mcl_gpu)/rviz/simulator.rviz"
