@@ -26,12 +26,13 @@ Utils::Timer::Timer(int smoothing): arr(Utils::CircularArray(smoothing))
     last_time = Clock::now();
 }
 
-void Utils::Timer::tick()
+float Utils::Timer::tick()
 {
-    Clock::time_point t = Clock::now();
-    std::chrono::duration<float, std::milli> elapsed_ms = t - last_time;
-    arr.append(elapsed_ms.count());
+    Clock t = Clock::now();
+    ros::Duration elapsed_ms = t - last_time;
+    arr.append(elapsed_ms.toSec()*1000.0);
     last_time = t;
+    return elapsed_ms.toSec()*1000.0;
 }
 
 float Utils::Timer::fps()

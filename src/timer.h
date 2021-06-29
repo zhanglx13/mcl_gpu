@@ -1,10 +1,12 @@
 #ifndef TIMER_H_
 #define TIMER_H_
 
+#include <ros/ros.h>
 #include <vector>
 #include <chrono>
 
-using Clock = std::chrono::high_resolution_clock;
+//using Clock = std::chrono::high_resolution_clock;
+using Clock = ros::Time;
 
 namespace Utils
 {
@@ -26,11 +28,11 @@ namespace Utils
     {
     public:
         Timer(int smoothing);
-        void tick();
+        float tick();
         float fps();
     protected:
         CircularArray arr;
-        Clock::time_point last_time;
+        Clock last_time;
     };
 }
 
