@@ -487,7 +487,7 @@ void MCL::update()
 {
     if (lidar_initialized_ && odom_initialized_ == 2 && map_initialized_)
     {
-        float event_interval = timer_.tick();
+        timer_.tick();
         ros::Time t1 = ros::Time::now();
         /*
          * one step of MCL algorithm:
@@ -523,7 +523,7 @@ void MCL::update()
             printf("iter %3d: avg_acc_time %f ms (event time %f ms) ---> avg_acc_error: (%f  %f  %f)\n",
                    iter_,
                    acc_time_ms_ / iter_,
-                   event_interval / 10.0,
+                   timer_.fps(),
                    acc_error_x_ / iter_,
                    acc_error_y_ / iter_,
                    acc_error_angle_ / iter_
