@@ -86,8 +86,8 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     if (p_publish_odom_)
         odom_pub_ = node_.advertise<nav_msgs::Odometry>("/pf/pose/odom", 1);
 
-    scan_sub_ = node_.subscribe(p_scan_topic_, 1, &MCL::lidarCB, this);
-    odom_sub_ = node_.subscribe(p_odom_topic_, 1, &MCL::odomCB, this);
+    scan_sub_ = node_.subscribe(p_scan_topic_, 1, &MCL::lidarCB, this, ros::TransportHints().tcpNoDelay());
+    odom_sub_ = node_.subscribe(p_odom_topic_, 1, &MCL::odomCB, this, ros::TransportHints().tcpNoDelay());
     pose_sub_ = node_.subscribe("/initialpose", 1, &MCL::pose_initCB, this);
     click_sub_ = node_.subscribe("/clicked_point", 1, &MCL::rand_initCB, this);
 
@@ -487,7 +487,7 @@ void MCL::update()
 {
     if (lidar_initialized_ && odom_initialized_ == 2 && map_initialized_)
     {
-        timer_.tick();
+        float event_interval = timer_.tick();
         ros::Time t1 = ros::Time::now();
         /*
          * one step of MCL algorithm:
@@ -518,14 +518,12 @@ void MCL::update()
 
         do_acc(spi.toSec()*1000.0);
         iter_ ++;
-        smoothing_.append(spi.toSec());
 
         if (iter_ != 0 && iter_ %10 == 0)
             printf("iter %3d: avg_acc_time %f ms (event time %f ms) ---> avg_acc_error: (%f  %f  %f)\n",
                    iter_,
-                   //smoothing_.mean(),
                    acc_time_ms_ / iter_,
-                   timer_.fps(),
+                   event_interval / 10.0,
                    acc_error_x_ / iter_,
                    acc_error_y_ / iter_,
                    acc_error_angle_ / iter_
