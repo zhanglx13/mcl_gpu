@@ -64,7 +64,7 @@
   <arg name="rate" default="1"/>
   <arg name="duration" default="5"/>
   <node pkg="rosbag" type="play" name="player"
-        args="--clock -r $(arg rate) -u $(arg duration) $(env HOME)/bags/$(arg bagfile).bag"
+        args="--clock -r $(arg rate) -u $(arg duration) $(find mcl_gpu)/bags/$(arg bagfile).bag"
         required = "true"
         launch-prefix="bash -c 'sleep $(arg delay); $0 $@' "
         if="$(eval arg('bag') == 1)"/>
