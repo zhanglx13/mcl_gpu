@@ -9,7 +9,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     rmgpu_ (omap, max_range_px),
     rm_ (omap, max_range_px),
     timer_ (Utils::Timer(10)),
-    smoothing_ (Utils::CircularArray(100))
+    maxW_ (Utils::CircularArray<double>(100))
 {
     ros::NodeHandle private_nh_("~");
     private_nh_.getParam("angle_step", p_angle_step_);
@@ -489,6 +489,7 @@ void MCL::update()
     {
         timer_.tick();
         ros::Time t1 = ros::Time::now();
+        double maxW;
         /*
          * one step of MCL algorithm:
          *   1. resampling
@@ -497,9 +498,9 @@ void MCL::update()
          *   4. normalize particle weights
          */
         if (!p_which_impl_.compare("cpu"))
-            MCL_cpu();
+            maxW = MCL_cpu();
         else if (!p_which_impl_.compare("gpu"))
-            MCL_gpu();
+            maxW = MCL_gpu();
         else if (!p_which_impl_.compare("adaptive"))
             MCL_adaptive();
         else
@@ -517,16 +518,18 @@ void MCL::update()
         ros::Duration spi = t2 - t1;
 
         do_acc(spi.toSec()*1000.0);
+        maxW_.append(maxW);
         iter_ ++;
 
         if (iter_ != 0 && iter_ %10 == 0)
-            printf("iter %3d: avg_acc_time %f ms (event time %f ms) ---> avg_acc_error: (%f  %f  %f)\n",
+            printf("iter %4d: time %7.4f ms (event time %7.4f ms)  error: (%f  %f  %f)  maxW: %e\n",
                    iter_,
                    acc_time_ms_ / iter_,
                    timer_.fps(),
                    acc_error_x_ / iter_,
                    acc_error_y_ / iter_,
-                   acc_error_angle_ / iter_
+                   acc_error_angle_ / iter_,
+                   maxW_.mean()
                 );
 
         visualize();
@@ -723,7 +726,7 @@ void MCL::select_particles(fvec_t &px, fvec_t &py, fvec_t &pangle, int num_parti
                    [this](int index) {return particles_angle_[index];});
 }
 
-void MCL::MCL_cpu()
+double MCL::MCL_cpu()
 {
     /*************************************************
      * Step 1: Resampling using discrete_distribution
@@ -783,11 +786,13 @@ void MCL::MCL_cpu()
       * std::reduce requires c++17
       */
     double sum_weight = std::reduce(weights_.begin(), weights_.end(), 0.0);
+    double maxW = *std::max_element(weights_.begin(), weights_.end());
     std::transform(weights_.begin(), weights_.end(), weights_.begin(),
                    [s = sum_weight](double w) {return w / s;});
+    return maxW;
 }
 
-void MCL::MCL_gpu()
+double MCL::MCL_gpu()
 {
     /***************************************************
      * step 1: Resampling
@@ -812,8 +817,10 @@ void MCL::MCL_gpu()
      * Step 3: normalize the weights
      *********************************/
     double sum_weight = std::reduce(weights_.begin(), weights_.end(), 0.0);
+    double maxW = *std::max_element(weights_.begin(), weights_.end());
     std::transform(weights_.begin(), weights_.end(), weights_.begin(),
                    [s = sum_weight](double w) {return w / s;});
+    return maxW;
 }
 
 void MCL::MCL_adaptive(){}

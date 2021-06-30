@@ -39,8 +39,8 @@ public:
 
     void update();
     /* different implementations of MCL algorithm */
-    void MCL_cpu();
-    void MCL_gpu();
+    double MCL_cpu();
+    double MCL_gpu();
     void MCL_adaptive();
 
     void motion_model();
@@ -171,7 +171,7 @@ protected:
     /* info of each iteration of the MCL algorithm */
     int iter_;
     Utils::Timer timer_;
-    Utils::CircularArray smoothing_;
+    Utils::CircularArray<double> maxW_;
     float acc_error_x_;
     float acc_error_y_;
     float acc_error_angle_;
