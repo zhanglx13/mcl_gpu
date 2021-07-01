@@ -34,10 +34,11 @@ public:
     void get_omap();
     void precompute_sensor_model();
     void initialize_global();
-    void initialize_initpose();
+    void initialize_initpose(int startover);
     void initialize_acc();
     void do_acc(float time_in_ms);
     double calc_diff(pose_t);
+    float calc_dis(pose_t);
 
     void update();
     /* different implementations of MCL algorithm */
@@ -174,11 +175,15 @@ protected:
     boost::mutex odom_mtx_;
     boost::mutex range_mtx_;
 
+    /* flag to control whether to perform resampling */
+    int do_res_;
+
     /* info of each iteration of the MCL algorithm */
     int iter_;
     Utils::Timer timer_;
     Utils::CircularArray<double> maxW_;
     Utils::CircularArray<double> diffW_;
+    Utils::CircularArray<double> dis_;
     float acc_error_x_;
     float acc_error_y_;
     float acc_error_angle_;
