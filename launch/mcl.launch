@@ -36,6 +36,7 @@
   <arg name="which_rm" default="rm"/>
   <arg name="which_viz" default="largest"/>
   <arg name="which_expect" default="largest"/>
+  <arg name="init_var" default="5"/>
 
   <!-- For the mcl_gpu package to work, a map needs to be loaded first -->
   <include file="$(find mcl_gpu)/launch/map_server.launch"/>
@@ -105,6 +106,12 @@
     <param name="motion_dispersion_x" value="0.05"/>
     <param name="motion_dispersion_y" value="0.025"/>
     <param name="motion_dispersion_theta" value="0.025"/>
+    <!--
+        variance used when initializing particles around a pose.
+        A smaller variance makes it easier for particles to converge, i.e. to follow the robot
+        More particles are needed if a large variance is used.
+    -->
+    <param name="init_var" value="$(arg init_var)"/>
 
   </node>
 </launch>

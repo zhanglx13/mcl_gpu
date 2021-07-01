@@ -28,6 +28,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     private_nh_.param("which_expect", p_which_expect_, std::string("largest"));
     private_nh_.param("publish_odom", p_publish_odom_, 1);
     private_nh_.getParam("viz", p_do_viz_);
+    private_nh_.getParam("init_var", p_init_var_);
 
     private_nh_.param("scan_topic", p_scan_topic_, std::string("scan"));
     private_nh_.param("odometry_topic", p_odom_topic_, std::string("odom"));
@@ -464,13 +465,13 @@ void MCL::initialize_initpose(int startover)
     unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::generate_n(particles_x_.begin(), p_max_particles_,
                     [x=init_pose_[0],
-                     distribution = std::normal_distribution<float>(0.0, 5),
+                     distribution = std::normal_distribution<float>(0.0, p_init_var_),
                      generator = std::default_random_engine(seed)] () mutable
                         {return x + distribution(generator);});
     seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::generate_n(particles_y_.begin(), p_max_particles_,
                     [y=init_pose_[1],
-                     distribution = std::normal_distribution<float>(0.0, 5),
+                     distribution = std::normal_distribution<float>(0.0, p_init_var_),
                      generator = std::default_random_engine(seed)] () mutable
                         {return y + distribution(generator);});
     seed = std::chrono::system_clock::now().time_since_epoch().count();

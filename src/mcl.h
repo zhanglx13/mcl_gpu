@@ -76,6 +76,7 @@ protected:
     std::string p_which_expect_;
     int p_publish_odom_;
     int p_do_viz_;
+    float p_init_var_;
 
     /* sensor model constants */
     float p_z_short_;
