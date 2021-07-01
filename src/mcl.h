@@ -1,6 +1,7 @@
 #ifndef MCL_H_
 #define MCL_H_
 
+#include <boost/thread/mutex.hpp>
 #include "ros/ros.h"
 
 #include "sensor_msgs/LaserScan.h"
@@ -36,6 +37,7 @@ public:
     void initialize_initpose();
     void initialize_acc();
     void do_acc(float time_in_ms);
+    double calc_diff(pose_t);
 
     void update();
     /* different implementations of MCL algorithm */
@@ -168,10 +170,15 @@ protected:
     fvec_t viz_queries_;
     fvec_t viz_ranges_;
 
+    /* mutex to protect shared data between threads */
+    boost::mutex odom_mtx_;
+    boost::mutex range_mtx_;
+
     /* info of each iteration of the MCL algorithm */
     int iter_;
     Utils::Timer timer_;
     Utils::CircularArray<double> maxW_;
+    Utils::CircularArray<double> diffW_;
     float acc_error_x_;
     float acc_error_y_;
     float acc_error_angle_;

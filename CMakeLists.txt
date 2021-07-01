@@ -21,6 +21,8 @@ find_package(catkin REQUIRED COMPONENTS
   tf
   )
 
+find_package(Boost REQUIRED COMPONENTS thread)
+
 ## Option used to turn on and off CUDA support
 option(WITH_CUDA "Compile CUDA ray cast varients" ON)
 # set(CHUNK_SIZE 16384)
@@ -134,6 +136,7 @@ catkin_package(
 ## Your package locations should be listed before other locations
 include_directories(
   include
+  ${Boost_INCLUDE_DIRS}
   ${catkin_INCLUDE_DIRS}
   )
 

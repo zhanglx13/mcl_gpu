@@ -1,8 +1,14 @@
 #include <ros/ros.h>
 #include <ros/console.h>
+#include <boost/thread/thread.hpp>
 
 #include "mcl.h"
 #include "nav_msgs/GetMap.h"
+
+void spin_thread()
+{
+    ros::spin();
+}
 
 int main(int argc, char** argv)
 {
@@ -34,39 +40,19 @@ int main(int argc, char** argv)
         {
             ROS_INFO("Getting map from service: %s", map_service_client.getService().c_str());
             const nav_msgs::OccupancyGrid& map (srv_map.response.map);
-
-            // unsigned char *image = (unsigned char*)malloc(sizeof(char)*map.info.width*map.info.height);
-            // for (int r = 0; r < map.info.height; r ++)
-            // {
-            //     for (int c = 0; c < map.info.width; c++)
-            //     {
-            //         image[r * map.info.width + c + 0] = map.data[r*map.info.width + c];
-            //     }
-            // }
-            // for (int r = 500; r < 510; r++){
-            //     for (int c=80; c < 120; c++){
-            //         image[r * map.info.width + c + 0] = 0;
-            //         std::cout<<(int)map.data[r*map.info.width + c]<<"  ";
-            //     }
-            //     std::cout<<std::endl;
-            // }
-            // if (lodepng_encode_file("/home/lixun/reconstructed_map.png",image, map.info.width, map.info.height, LCT_GREY, 8))
-            // {
-            //     ROS_ERROR("lodepng_encode");
-            // }
             /*
               @note
              * For the occupancy grid map, width and height are the number of cells in x and y dimension
              * resolution is meters per cell
              * origin is the pose of cell[0][0] in world frame. Sometimes the map can be rotated.
              */
+            ranges::OMap omap = ranges::OMap(map);
             ROS_INFO("    resolution: %f", map.info.resolution);
             ROS_INFO("    width:      %d", map.info.width);
             ROS_INFO("    height:     %d", map.info.height);
             ROS_INFO("    origin (pose of cell[0][0])");
             ROS_INFO("       x: %f", map.info.origin.position.x);
             ROS_INFO("       y: %f", map.info.origin.position.y);
-            ranges::OMap omap = ranges::OMap(map);
             ROS_INFO("       angle: %f", omap.quaternion_to_angle(map.info.origin.orientation));
             ROS_INFO("       quat: [%f %f %f %f]",
                      map.info.origin.orientation.x,
@@ -83,7 +69,17 @@ int main(int argc, char** argv)
              * RayMarchingGPU. It is supposed to be the max range in the map.
              */
             MCL mcl(omap, max_range/omap.world_scale);
-            ros::spin();
+
+            /* spawn another thread to handle callbacks */
+            boost::thread thd_spin(spin_thread);
+
+            ros::Rate r(100); // 100 Hz
+            while (ros::ok())
+            {
+                mcl.update();
+                r.sleep();
+            }
+            thd_spin.join();
         }
         else
         {

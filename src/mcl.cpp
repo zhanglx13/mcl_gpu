@@ -9,7 +9,8 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     rmgpu_ (omap, max_range_px),
     rm_ (omap, max_range_px),
     timer_ (Utils::Timer(10)),
-    maxW_ (Utils::CircularArray<double>(100))
+    maxW_ (Utils::CircularArray<double>(10)),
+    diffW_ (Utils::CircularArray<double>(10))
 {
     ros::NodeHandle private_nh_("~");
     private_nh_.getParam("angle_step", p_angle_step_);
@@ -413,6 +414,7 @@ void MCL::odomCB(const nav_msgs::Odometry& msg)
     pose[0] = msg.pose.pose.position.x;
     pose[1] = msg.pose.pose.position.y;
     pose[2] = omap_.quaternion_to_angle(msg.pose.pose.orientation);
+    odom_mtx_.lock();
     if (odom_initialized_ >= 1)
     {
         /*
@@ -432,9 +434,10 @@ void MCL::odomCB(const nav_msgs::Odometry& msg)
         odom_initialized_ = 1;
     last_pose_ = pose;
     last_stamp_ = msg.header.stamp;
+    odom_mtx_.unlock();
 
     /* this topic is slower than lidar, so update every time we receive a message */
-    update();
+    //update();
 }
 
 void MCL::pose_initCB(const geometry_msgs::PoseWithCovarianceStamped& msg)
@@ -487,6 +490,12 @@ void MCL::update()
 {
     if (lidar_initialized_ && odom_initialized_ == 2 && map_initialized_)
     {
+        pose_t old_pose;
+        odom_mtx_.lock();
+        old_pose[0] = last_pose_[0];
+        old_pose[1] = last_pose_[1];
+        old_pose[2] = last_pose_[2];
+        odom_mtx_.unlock();
         timer_.tick();
         ros::Time t1 = ros::Time::now();
         double maxW;
@@ -519,22 +528,43 @@ void MCL::update()
 
         do_acc(spi.toSec()*1000.0);
         maxW_.append(maxW);
+        pose_t new_pose;
+        odom_mtx_.lock();
+        new_pose[0] = last_pose_[0];
+        new_pose[1] = last_pose_[1];
+        new_pose[2] = last_pose_[2];
+        odom_mtx_.unlock();
+        double diffW = calc_diff(new_pose);
+        diffW_.append(diffW);
         iter_ ++;
 
         if (iter_ != 0 && iter_ %10 == 0)
-            printf("iter %4d: time %7.4f ms (event time %7.4f ms)  error: (%f  %f  %f)  maxW: %e\n",
+            printf("iter %4d: time %7.4f ms (event time %7.4f ms)  maxW: %e  diffW: %e\n",
                    iter_,
                    acc_time_ms_ / iter_,
                    timer_.fps(),
-                   acc_error_x_ / iter_,
-                   acc_error_y_ / iter_,
-                   acc_error_angle_ / iter_,
-                   maxW_.mean()
+                   maxW_.mean(),
+                   diffW_.mean()
                 );
 
         visualize();
 
+
+        // printf("%3d delta: (%e, %e, %e) --- w: %e  maxW: %e\n", iter_,
+        //        old_pose[0] - new_pose[0],
+        //        old_pose[1] - new_pose[1],
+        //        old_pose[2] - new_pose[2],
+        //        calc_diff(old_pose),
+        //        maxW
+        //     );
     }
+}
+
+double MCL::calc_diff(pose_t reference)
+{
+    return rm_.calc_diff_pose(reference.data(), inferred_pose_.data(),
+                              downsampled_angles_.data(), downsampled_angles_.size(),
+                              p_inv_squash_factor_);
 }
 
 void MCL::do_acc(float time_in_ms)
@@ -549,16 +579,16 @@ void MCL::expected_pose()
 {
     if (!p_which_expect_.compare("ave"))
     {
-    /*
-      @note
-      * std::transform_reduce requires c++17
-      */
-    inferred_pose_[0] = std::transform_reduce(particles_x_.begin(), particles_x_.end(),
-                                              weights_.begin(), 0.0);
-    inferred_pose_[1] = std::transform_reduce(particles_y_.begin(), particles_y_.end(),
-                                              weights_.begin(), 0.0);
-    inferred_pose_[2] = std::transform_reduce(particles_angle_.begin(), particles_angle_.end(),
-                                              weights_.begin(), 0.0);
+        /*
+          @note
+          * std::transform_reduce requires c++17
+          */
+        inferred_pose_[0] = std::transform_reduce(particles_x_.begin(), particles_x_.end(),
+                                                  weights_.begin(), 0.0);
+        inferred_pose_[1] = std::transform_reduce(particles_y_.begin(), particles_y_.end(),
+                                                  weights_.begin(), 0.0);
+        inferred_pose_[2] = std::transform_reduce(particles_angle_.begin(), particles_angle_.end(),
+                                                  weights_.begin(), 0.0);
     }
     else if (!p_which_expect_.compare("largest"))
     {
@@ -827,6 +857,12 @@ void MCL::MCL_adaptive(){}
 
 void MCL::motion_model()
 {
+    pose_t odelta;
+    odom_mtx_.lock();
+    odelta[0] = odometry_delta_[0];
+    odelta[1] = odometry_delta_[1];
+    odelta[2] = odometry_delta_[2];
+    odom_mtx_.unlock();
     /* rotate the action into the coordinate space of each particle */
     fvec_t cosines(p_max_particles_);
     fvec_t sines(p_max_particles_);
@@ -840,13 +876,13 @@ void MCL::motion_model()
     std::transform(cosines.begin(), cosines.end(),
                    sines.begin(),
                    local_deltas_x.begin(),
-                   [this](float c, float s)
-                       {return c*odometry_delta_[0]-s*odometry_delta_[1];});
+                   [odelta](float c, float s)
+                       {return c*odelta[0]-s*odelta[1];});
     std::transform(cosines.begin(), cosines.end(),
                    sines.begin(),
                    local_deltas_y.begin(),
-                   [this](float c, float s)
-                       {return s*odometry_delta_[0]+c*odometry_delta_[1];});
+                   [odelta](float c, float s)
+                       {return s*odelta[0]+c*odelta[1];});
     /* Add the local delta to each particle */
     unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::transform(particles_x_.begin(), particles_x_.end(),
@@ -868,9 +904,9 @@ void MCL::motion_model()
     std::transform(particles_angle_.begin(), particles_angle_.end(),
                    particles_angle_.begin(),
                    [distribution = std::normal_distribution<float>(0.0, p_motion_dispersion_theta_),
-                    generator = std::default_random_engine(seed), this]
+                    generator = std::default_random_engine(seed), odelta]
                    (float angle) mutable
-                       {return angle + odometry_delta_[2] + distribution(generator);});
+                       {return angle + odelta[2] + distribution(generator);});
 }
 
 /*
