@@ -1137,6 +1137,56 @@ namespace ranges {
             return max_range;
         }
 
+        double calc_diff_pose(
+            float *ref_pose,
+            float *inferred_pose,
+            float *angles,
+            int num_angles,
+            double inv_squash_factor)
+        {
+            double w;
+            float r,d, temp;
+            /* cache these constants on the stack for efficiency */
+            float inv_world_scale = 1.0 / map.world_scale;
+            //float world_scale = map.world_scale;
+            float world_angle = map.world_angle;
+            float world_origin_x = map.world_origin_x;
+            float world_origin_y = map.world_origin_y;
+            float world_sin_angle = map.world_sin_angle;
+            float world_cos_angle = map.world_cos_angle;
+
+            float x_world_ref = ref_pose[0];
+            float y_world_ref = ref_pose[1];
+            float theta_world_ref = ref_pose[2];
+            float theta_ref = theta_world_ref - world_angle;
+            float x_ref = (x_world_ref - world_origin_x) * inv_world_scale;
+            float y_ref = (y_world_ref - world_origin_y) * inv_world_scale;
+            temp = x_ref;
+            x_ref = world_cos_angle*x_ref + world_sin_angle*y_ref;
+            y_ref = -world_sin_angle*temp + world_cos_angle*y_ref;
+
+            float x_world_inferred = inferred_pose[0];
+            float y_world_inferred = inferred_pose[1];
+            float theta_world_inferred = inferred_pose[2];
+            float theta_inferred = theta_world_inferred - world_angle;
+            float x_inferred = (x_world_inferred - world_origin_x) * inv_world_scale;
+            float y_inferred = (y_world_inferred - world_origin_y) * inv_world_scale;
+            temp = x_inferred;
+            x_inferred = world_cos_angle*x_inferred + world_sin_angle*y_inferred;
+            y_inferred = -world_sin_angle*temp + world_cos_angle*y_inferred;
+
+            w = 1.0;
+            for (int a = 0; a < num_angles; a++)
+            {
+                d = calc_range(x_inferred, y_inferred, theta_inferred + angles[a]);
+                d = std::min<float>(std::max<float>(d,0.0),(float)sensor_model.size()-1.0);
+                r = calc_range(x_ref, y_ref, theta_ref + angles[a]);
+                r = std::min<float>(std::max<float>(r,0.0),(float)sensor_model.size()-1.0);
+                w *= sensor_model[(int)r][(int)d];
+            }
+            return pow(w, inv_squash_factor);
+        }
+
         void calc_range_eval_sensor_model(
             float *px, float *py, float *pangle,
             float *obs, float *angles,
