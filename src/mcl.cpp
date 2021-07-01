@@ -573,7 +573,7 @@ void MCL::update()
 
         /* print info per 10 iterations */
         if (iter_ != 0 && iter_ %10 == 0){
-            printf("%4d: time %7.4f ms interval %7.4f ms  maxW: %e  diffW: %e  dis: %7.4f\n",
+            printf("iter %4d: time %7.4f ms interval %7.4f ms  maxW: %e  diffW: %e  dis: %7.4f\n",
                    iter_, acc_time_ms_ / iter_, timer_.fps(),
                    maxW_.mean(), diffW_.mean(), dis_.mean() );
 
