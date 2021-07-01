@@ -361,10 +361,12 @@ void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
             mclgpu_->set_angles(downsampled_angles_.data());
     }
     /* down sample the range */
+    range_mtx_.lock();
     for (int i = 0; i < num_ranges; i += p_angle_step_)
         downsampled_ranges_[i/p_angle_step_] = msg.ranges[i];
     std::replace_if(downsampled_ranges_.begin(), downsampled_ranges_.end(),
                     [](float range){return range > 10.0;}, 10.0);
+    range_mtx_.unlock();
     lidar_initialized_ = 1;
 }
 
@@ -917,6 +919,11 @@ void MCL::motion_model()
  */
 void MCL::sensor_model()
 {
+    fvec_t ranges(downsampled_ranges_.size());
+    range_mtx_.lock();
+    std::copy(downsampled_ranges_.begin(), downsampled_ranges_.end(), ranges.begin());
+    range_mtx_.unlock();
+
     if (!p_which_rm_.compare("rmgpu"))
     {
         /*
@@ -927,13 +934,13 @@ void MCL::sensor_model()
          */
         rmgpu_.calc_range_eval_sensor_model_particle(
             particles_x_, particles_y_, particles_angle_,
-            downsampled_ranges_, downsampled_angles_, weights_,
+            ranges, downsampled_angles_, weights_,
             p_max_particles_, (int)downsampled_ranges_.size());
 #if 0
         /* one thread compute one range */
         rmgpu_.calc_range_eval_sensor_model_angle(
             particles_x_, particles_y_, particles_angle_,
-            downsampled_ranges_, downsampled_angles_, weights_,
+            ranges, downsampled_angles_, weights_,
             p_max_particles_, (int)downsampled_ranges_.size());
 #endif
     }
@@ -941,7 +948,7 @@ void MCL::sensor_model()
     {
         rm_.calc_range_eval_sensor_model(
             particles_x_.data(), particles_y_.data(), particles_angle_.data(),
-            downsampled_ranges_.data(), downsampled_angles_.data(),
+            ranges.data(), downsampled_angles_.data(),
             weights_.data(),
             p_max_particles_, (int)downsampled_angles_.size(), p_inv_squash_factor_);
     }
