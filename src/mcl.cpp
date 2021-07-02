@@ -573,7 +573,7 @@ void MCL::update()
 
         /* print info per 10 iterations */
         if (iter_ != 0 && iter_ %10 == 0){
-            printf("iter %4d: time %7.4f ms interval %7.4f ms  maxW: %e  diffW: %e  dis: %7.4f\n",
+            printf("iter %4d time %7.4f ms interval %7.4f ms  maxW: %e  diffW: %e  dis: %7.4f\n",
                    iter_, acc_time_ms_ / iter_, timer_.fps(),
                    maxW_.mean(), diffW_.mean(), dis_.mean() );
 
@@ -862,7 +862,8 @@ double MCL::MCL_gpu()
      * step 1: Resampling
      * using std::discrete_distribution
      ***************************************************/
-    resampling();
+    if (do_res_)
+        resampling();
 
     /********************************************************************************
      * step 2: apply motion model to advance the particles and compute their weights
