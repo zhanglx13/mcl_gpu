@@ -31,7 +31,8 @@ from the progress branch.
 
 # Draw figures
 
-`gnuplot -e 'col=c' draw.gp` will draw figures that are saved in `fig/`.
+`gnuplot -e 'col=c' draw_error.gp` plots the error of the mcl algorithm.
+Figures that are saved in `fig/`.
 `c` can be 10 (**maxW**) or 12 (**diffW**). 
 Once `c` is decided, the above command will draw figures for both CPU and GPU results.
 
