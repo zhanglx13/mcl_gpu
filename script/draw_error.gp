@@ -1,5 +1,44 @@
 set t pdfcairo
 
+
+##
+## Draw average and stddev of maxW and diffW of all numbers of particles
+##
+set xlabel "Number of particles"
+
+drawvline(x) = sprintf("set arrow front from %f, graph 0 to %f, graph 1 nohead dt 2 lw 1", x,x)
+GPUfilename="sprintf(\"table/GPU_%s.txt\", word(metric, m))"
+CPUfilename="sprintf(\"table/CPU_%s.txt\", word(metric, m))"
+
+metric="maxW diffW"
+do for [m=1:words(metric)]{
+    set o sprintf("fig/avg_stddev_%s.pdf", word(metric, m))
+    eval drawvline(2000)
+    eval drawvline(4000)
+    set ylabel "weight (lg(w*1e63))"
+    
+    set title "Averaged max weight of all runs"
+    set key bottom right
+    plot  @GPUfilename u 1:2 w l lw 1 lc rgb "red" t "GPU", \
+          for [c=2:5:1] @GPUfilename u 1:(column(c*2)) w l lw 1 lc rgb "red" t "", \
+          @CPUfilename u 1:2 w l lw 1 lc rgb "blue" t "CPU" ,\
+          for [c=2:5:1] @CPUfilename u 1:(column(c*2)) w l lw 1 lc rgb "blue" t ""
+    
+    set title "stddev of max weight of all runs"
+    set ylabel "standard deviation"
+    set key top right
+    plot  @GPUfilename u 1:3 w l lw 1 lc rgb "red" t "GPU", \
+          for [c=2:5:1] @GPUfilename u 1:(column(c*2+1)) w l lw 1 lc rgb "red" t "", \
+          @CPUfilename u 1:3 w l lw 1 lc rgb "blue" t "CPU" ,\
+          for [c=2:5:1] @CPUfilename u 1:(column(c*2+1)) w l lw 1 lc rgb "blue" t ""
+}
+
+##
+## If col is not defined, do not draw the following figures to
+## save some time.
+##
+if (!exists("col")) exit
+
 ##
 ## fig_all_runs_n_colname.pdf
 ##
@@ -31,17 +70,27 @@ set tics font ",10"
 ## In this way, we can easily combine different ranges
 ## Note that we need to do n+0 to convert n from string to int
 ##
-n_arr=""
+n_basic=""
 do for [n=100:1000:100]{
-    n_arr = n_arr . n . " "
+    n_basic = n_basic . n . " "
 }
 
 do for [a=1:words(arch)]{
+
     if (word(arch,a) eq "GPU"){
+        ## GPU extra range
+        n_arr = n_basic
         do for [n=1024:15360:512]{
             n_arr = n_arr . n . " "
         }
+    } else {
+        ## CPU extra range
+        n_arr = n_basic
+        do for [n=2000:15000:1000]{
+            n_arr = n_arr . n . " "
+        }
     }
+
     do for [n in n_arr]{
         set o sprintf("fig/%s_all_runs_%s_%d.pdf", word(arch, a), colname,n+0)
         do for [var=1:5:1]{

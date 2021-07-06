@@ -1,1 +1,7 @@
 src/*.o
+script/CPU
+script/GPU
+script/GPU_old
+script/fig
+script/table
+script/test.sh
