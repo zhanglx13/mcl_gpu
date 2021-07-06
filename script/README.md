@@ -31,6 +31,8 @@ from the progress branch.
 
 # Draw figures
 
+## Weights of `maxW` and `diffW` 
+
 `gnuplot -e 'col=c' draw_error.gp` plots the error of the mcl algorithm.
 Figures that are saved in `fig/`.
 `c` can be 10 (**maxW**) or 12 (**diffW**). 
@@ -49,9 +51,37 @@ as part of the title of the page.
 One thing to note is that it is log10(maxW*1e63) and log10(diffW*1e63) that are plotted
 since the original data are too small to compare the averages.
 
-## Requirements
+## Average and stddev of `maxW` and `diffW`
 
-Results should be saved in `CPU/` and `GPU/`.
+When `-e "col=c"` is not specified, the average and stddev of `maxW` and `diffW`
+are plotted.
+This requires `table/$arch_maxW.txt` and `table/$arch_diffW.txt` to be generated 
+(see section below).
+
+Output files: `fig/avg_stddev_maxW.pdf` and `fig/avg_stddev_diffW.pdf`
+
+Each file contains two pages, one plots average and the other plots stddev.
+These figures are supposed to show that the more particles, the higher the
+average and the lower the stddev until a threshold number of particles is
+reached.
+However, this is not true for the CPU implementation, in which the average
+drops and stddev increases after around 1000 particles.
+Because when more particles are used (more than 1000), the interval for each 
+iteration gets too large so that the algorithm cannot keep up with the robot.
+
+## Time and msg lost rate
+
+`gnuplot draw_time.gp` plots elapsed time of each iteration of the mcl algorithm
+with different numbers of particles and message lost rate, which is calculated by
+the max iterations of each run.
+
+Output file: `fig/time.pdf`
+
+This figure shows that message lost rate starts to be larger than zero and keeps
+growing when the elapsed time is larger than the message period (10 ms).
+It also shows that the GPU implementation can afford about 10000 particles while
+the CPU implementation can only support about 450 particles.
+
 
 # Process results
 
