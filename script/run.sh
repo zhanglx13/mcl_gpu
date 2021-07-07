@@ -10,9 +10,11 @@ start=$2
 step=$3
 end=$4
 
-for init_var in `seq 1 1 5`
+sudo ./chpmod.sh 1
+
+for n in `seq $start $step $end`
 do
-    for n in `seq $start $step $end`
+    for init_var in `seq 1 1 5`
     do
         for i in `seq 1 1 10`
         do
@@ -23,3 +25,5 @@ do
         done
     done
 done
+
+sudo ./chpmod.sh 0
