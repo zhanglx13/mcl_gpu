@@ -1,1 +1,10 @@
 src/*.o
+script/CPU
+script/CPU_*
+script/GPU
+script/GPU_*
+script/fig
+script/fig_*
+script/table
+script/table_*
+script/test.*
