@@ -1,6 +1,6 @@
 #include <ros/ros.h>
 #include <ros/console.h>
-#include <boost/thread/thread.hpp>
+#include <thread>
 
 #include "mcl.h"
 #include "nav_msgs/GetMap.h"
@@ -71,7 +71,7 @@ int main(int argc, char** argv)
             MCL mcl(omap, max_range/omap.world_scale);
 
             /* spawn another thread to handle callbacks */
-            boost::thread thd_spin(spin_thread);
+            std::thread thd_spin(spin_thread);
 
             ros::Rate r(100); // 100 Hz
             while (ros::ok())
@@ -79,7 +79,8 @@ int main(int argc, char** argv)
                 mcl.update();
                 r.sleep();
             }
-            thd_spin.join();
+            if (thd_spin.joinable())
+                thd_spin.join();
         }
         else
         {

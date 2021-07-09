@@ -923,25 +923,16 @@ void MCL::motion_model()
     std::transform(particles_x_.begin(), particles_x_.end(),
                    local_deltas_x.begin(),
                    particles_x_.begin(),
-                   [distribution = std::normal_distribution<float>(0.0, p_motion_dispersion_x_),
-                    generator = std::default_random_engine(seed)]
-                   (float x, float delta) mutable
-                       {return x + delta + distribution(generator);});
+                   PlusWithNoise<float>(seed, p_motion_dispersion_x_));
     seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::transform(particles_y_.begin(), particles_y_.end(),
                    local_deltas_y.begin(),
                    particles_y_.begin(),
-                   [distribution = std::normal_distribution<float>(0.0, p_motion_dispersion_y_),
-                    generator = std::default_random_engine(seed)]
-                   (float y, float delta) mutable
-                       {return y + delta + distribution(generator);});
+                   PlusWithNoise<float>(seed, p_motion_dispersion_y_));
     seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::transform(particles_angle_.begin(), particles_angle_.end(),
                    particles_angle_.begin(),
-                   [distribution = std::normal_distribution<float>(0.0, p_motion_dispersion_theta_),
-                    generator = std::default_random_engine(seed), odelta]
-                   (float angle) mutable
-                       {return angle + odelta[2] + distribution(generator);});
+                   std::bind(PlusWithNoise<float>(seed, p_motion_dispersion_theta_), std::placeholders::_1, odelta[2]) );
 }
 
 /*

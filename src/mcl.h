@@ -1,7 +1,7 @@
 #ifndef MCL_H_
 #define MCL_H_
 
-#include <boost/thread/mutex.hpp>
+#include <mutex>
 #include "ros/ros.h"
 
 #include "sensor_msgs/LaserScan.h"
@@ -173,8 +173,8 @@ protected:
     fvec_t viz_ranges_;
 
     /* mutex to protect shared data between threads */
-    boost::mutex odom_mtx_;
-    boost::mutex range_mtx_;
+    std::mutex odom_mtx_;
+    std::mutex range_mtx_;
 
     /* flag to control whether to perform resampling */
     int do_res_;
@@ -189,6 +189,22 @@ protected:
     float acc_error_y_;
     float acc_error_angle_;
     float acc_time_ms_;
+};
+
+template <class T>
+class PlusWithNoise
+{
+public:
+    PlusWithNoise(unsigned seed, T stddev) :
+        seed_(seed), stddev_(stddev),
+        dist_ (std::normal_distribution<T>(0.0, stddev_)),
+        gen_ (std::default_random_engine(seed_)) {}
+    T operator()(T a, T b) {return a + b + dist_(gen_); }
+private:
+    unsigned seed_;
+    T stddev_;
+    std::default_random_engine gen_;
+    std::normal_distribution<T> dist_;
 };
 
 #endif
