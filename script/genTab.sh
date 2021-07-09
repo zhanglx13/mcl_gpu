@@ -8,13 +8,14 @@ gnuplot -e "col=10" process.gp
 gnuplot -e "col=12" process.gp
 
 # table for n iter time
-for arch in CPU GPU
+for arch in CPU_jetson GPU_jetson
 do
 echo "Generating table/${arch}_time.txt"
     rm -f table/${arch}_time.txt
     for result in $arch/*
     do
-        num=${result#*_}
+        num=${result#*/}
+        num=${num#*_}
         n=${num%%_*}
         var=${num#*_}
         var=${var%%_*}
@@ -26,12 +27,12 @@ echo "Generating table/${arch}_time.txt"
 done
 
 # aggregated table for n iter time
-for arch in CPU GPU
+for arch in CPU_jetson GPU_jetson
 do
-    if [ $arch == "CPU" ]; then
+    if [ $arch == "CPU_jetson" ]; then
         range=$(seq 100 100 1000)
     else
-        range=$(seq 100 100 1000; seq 1024 512 15360)
+        range=$(seq 100 100 1000; seq 1024 1024 15360)
     fi
     rm -f table/${arch}_time_agg.txt
     echo "Generating table/${arch}_time_agg.txt"

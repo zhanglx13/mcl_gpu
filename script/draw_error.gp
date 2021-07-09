@@ -7,12 +7,12 @@ set t pdfcairo
 set xlabel "Number of particles"
 
 drawvline(x) = sprintf("set arrow front from %f, graph 0 to %f, graph 1 nohead dt 2 lw 1", x,x)
-GPUfilename="sprintf(\"table/GPU_%s.txt\", word(metric, m))"
-CPUfilename="sprintf(\"table/CPU_%s.txt\", word(metric, m))"
+GPUfilename="sprintf(\"table/GPU_jetson_%s.txt\", word(metric, m))"
+CPUfilename="sprintf(\"table/CPU_jetson_%s.txt\", word(metric, m))"
 
 metric="maxW diffW"
 do for [m=1:words(metric)]{
-    set o sprintf("fig/avg_stddev_%s.pdf", word(metric, m))
+    set o sprintf("fig/jetson_avg_stddev_%s.pdf", word(metric, m))
     eval drawvline(2000)
     eval drawvline(4000)
     set ylabel "weight (lg(w*1e63))"
@@ -56,7 +56,7 @@ if (col == 12) {
 } else {
     colname="maxW"
 }
-arch="CPU GPU"
+arch="CPU_jetson GPU_jetson"
 unset key
 set grid
 set xlabel "iterations"
@@ -77,16 +77,16 @@ do for [n=100:1000:100]{
 
 do for [a=1:words(arch)]{
 
-    if (word(arch,a) eq "GPU"){
+    if (word(arch,a) eq "GPU_jetson"){
         ## GPU extra range
         n_arr = n_basic
-        do for [n=1024:15360:512]{
+        do for [n=1024:15360:1024]{
             n_arr = n_arr . n . " "
         }
     } else {
         ## CPU extra range
         n_arr = n_basic
-        do for [n=2000:15000:1000]{
+        do for [n=2000:13000:1000]{
             n_arr = n_arr . n . " "
         }
     }

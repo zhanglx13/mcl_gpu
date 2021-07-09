@@ -31,7 +31,7 @@ if (col == 12) {
     }
 }
 
-arch="CPU GPU"
+arch="CPU_jetson GPU_jetson"
 
 n_basic=""
 do for [n=100:1000:100]{
@@ -40,16 +40,16 @@ do for [n=100:1000:100]{
 
 do for [a=1:words(arch)]{
 
-    if (word(arch,a) eq "GPU"){
+    if (word(arch,a) eq "GPU_jetson"){
         ## GPU extra range
         n_arr = n_basic
-        do for [n=1024:15360:512]{
+        do for [n=1024:15360:1024]{
             n_arr = n_arr . n . " "
         }
     } else {
         ## CPU extra range
         n_arr = n_basic
-        do for [n=2000:15000:1000]{
+        do for [n=2000:13000:1000]{
             n_arr = n_arr . n . " "
         }
     }
