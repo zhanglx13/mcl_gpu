@@ -44,10 +44,13 @@ public:
     /* different implementations of MCL algorithm */
     double MCL_cpu();
     double MCL_gpu();
+    double MCL_hybrid();
+    void t_gpu_update(int N_gpu);
     void MCL_adaptive();
+    int particle_partition();
 
-    void motion_model();
-    void sensor_model();
+    void motion_model(int start, int num_particles);
+    void sensor_model(int start, int num_particles);
     void resampling();
 
     void expected_pose();
@@ -66,6 +69,7 @@ protected:
     /* parameters */
     int p_angle_step_;
     int p_max_particles_;
+    int p_N_gpu_;
     int p_max_viz_particles_;
     double p_inv_squash_factor_;
     float p_max_range_meters_;

@@ -85,7 +85,6 @@ __device__ float calc_range1(float x0, float y0, float theta, float *distMap, in
 __global__ void setup_kernel(curandState *state, int n)
 {
     int id = threadIdx.x + blockIdx.x * blockDim.x;
-    if (id == 0) printf("@@ Kernel <<<setup_kernel>>> is called!\n");
     if (id >= n) return;
     /* Each thread gets same seed, a different sequence
        number, no offset */
@@ -96,7 +95,12 @@ __global__ void cuda_motion_sensor_model(
     curandState *states,
     float *particles,
     float *odom_delta,
-    int N,
+    /*
+     * N is the total number of particles, which determines the dimension of particles
+     * in device memory.
+     * num_particles is the number of particles assigned to GPU.
+     */
+    int N, int num_particles,
     float *obs, /* observations, i.e. downsampled ranges from the lidar */
     double *sensorTable, int table_width, /* sensor table used by the sensor model */
     float *distMap, int width, int height, float max_range, /* distance map info */
@@ -111,11 +115,7 @@ __global__ void cuda_motion_sensor_model(
     int blocks, int lastBlockNotFull)
 {
     int p = threadIdx.x + blockIdx.x * blockDim.x;
-    // if (p == 0) {
-    //     printf("@@ Kernel <<<cuda_sensor_model>>> is called! on %d threads per block\n", NUM_THREADS);
-    //     print_constants();
-    // }
-    if (p >= N) return;
+    if (p >= num_particles) return;
     curandState localState = states[p];
     float x     = particles[p];
     float y     = particles[p + N];
@@ -176,11 +176,8 @@ __global__ void cuda_motion_sensor_model(
         double eval = s_sensorTable_row[d];
         /* accumulate the weight */
         w *= eval;
-        //printf("@@ %f: r=%d  d=%d  eval=%lf\n", theta, r, d, eval);
-
     }
     weights[p] = pow(w, c_inv_squash_factor);
-    //printf("@@ w=%e  weight=%e\n", w, weights[p]);
 
 
     /* update particles with new pose */
@@ -192,7 +189,6 @@ __global__ void cuda_motion_sensor_model(
 
 MCLGPU::MCLGPU(int num_particles): np_(num_particles)
 {
-    printf("## MCLGPU constructor called!! Number of particles: %d\n", np_);
     /* Allocated device space */
     checkCUDAError(cudaMalloc((void**)&d_particles_, sizeof(float)*np_*3));
     checkCUDAError(cudaMalloc((void**)&d_weights_, sizeof(double)*np_));
@@ -205,24 +201,19 @@ MCLGPU::MCLGPU(int num_particles): np_(num_particles)
 
     /* Initialize curand */
     checkCUDAError(cudaMalloc((void **)&d_states_, np_*sizeof(curandState)));
-    int blocks = np_/NUM_THREADS;
-    if (blocks == 0) blocks = 1;
+    int blocks = (np_ + NUM_THREADS - 1) /NUM_THREADS;
     setup_kernel<<<blocks, NUM_THREADS>>>(d_states_, np_);
     checkLastCUDAError("setup_kernel");
 }
 
 MCLGPU::~MCLGPU()
 {
-    printf("## MCLGPU destructor called!\n");
     checkCUDAError(cudaFree(d_particles_));
     checkCUDAError(cudaFree(d_weights_));
 }
 
 void MCLGPU::set_angles(float *angles)
 {
-    printf("## MCLGPU::set_angles() called!\n");
-    printf("   angles (0-10): ");
-    for (int i = 0; i < 10; i++) printf("%f  ", angles[i]); printf("\n");
     checkCUDAError(cudaMemcpyToSymbol(c_angles, angles, sizeof(float)*NUM_ANGLES));
 }
 
@@ -232,11 +223,13 @@ void MCLGPU::init_constants(
     float motion_dispersion_theta,
     double inv_squash_factor)
 {
+#ifdef PRINT_INFO
     printf("## MCLGPU::init_constants() called!\n");
     printf("     motion_dispersion_x:     %f\n", motion_dispersion_x);
     printf("     motion_dispersion_y:     %f\n", motion_dispersion_y);
     printf("     motion_dispersion_theta: %f\n", motion_dispersion_theta);
     printf("     inv_squash_factor:       %f\n", inv_squash_factor);
+#endif
     checkCUDAError(cudaMemcpyToSymbol(c_motion_dispersion_x,
                                  &motion_dispersion_x, sizeof(float)));
     checkCUDAError(cudaMemcpyToSymbol(c_motion_dispersion_y,
@@ -249,13 +242,14 @@ void MCLGPU::init_constants(
 
 void MCLGPU::update(float *px, float *py, float *pangle,
                     float *odometry_delta, float *obs, int num_angles,
-                    double *weights)
+                    double *weights,
+                    /* N is the number of particles assigned to GPU */
+                    int N )
 {
-    //printf("## MCLGPU::update() called\n");
     /* Copy particles from host to device */
-    checkCUDAError(cudaMemcpy(d_particles_, px, sizeof(float)*np_, cudaMemcpyHostToDevice));
-    checkCUDAError(cudaMemcpy(d_particles_+np_, py, sizeof(float)*np_, cudaMemcpyHostToDevice));
-    checkCUDAError(cudaMemcpy(d_particles_+np_*2, pangle, sizeof(float)*np_, cudaMemcpyHostToDevice));
+    checkCUDAError(cudaMemcpy(d_particles_, px, sizeof(float)*N, cudaMemcpyHostToDevice));
+    checkCUDAError(cudaMemcpy(d_particles_+np_, py, sizeof(float)*N, cudaMemcpyHostToDevice));
+    checkCUDAError(cudaMemcpy(d_particles_+np_*2, pangle, sizeof(float)*N, cudaMemcpyHostToDevice));
 
     /* copy odometry delta from host to device */
     checkCUDAError(cudaMemcpy(d_odom_delta_, odometry_delta, sizeof(float)*3, cudaMemcpyHostToDevice));
@@ -264,10 +258,10 @@ void MCLGPU::update(float *px, float *py, float *pangle,
 
     int blocks = np_/NUM_THREADS;
     int rem = np_ - NUM_THREADS * blocks;
-    if (blocks == 0) blocks = 1;
+    if (rem != 0) blocks += 1;
     cuda_motion_sensor_model<<<blocks, NUM_THREADS, sizeof(double)*table_width_>>>(
         d_states_, d_particles_, d_odom_delta_,
-        np_,
+        np_, N,
         d_obs_,
         d_sensorTable_, table_width_,
         d_distMap_, width_, height_, max_range_,
@@ -277,16 +271,15 @@ void MCLGPU::update(float *px, float *py, float *pangle,
     checkLastCUDAError_noAbort("cuda_motion_sensor_model");
 
     /* copy weights back to host */
-    checkCUDAError(cudaMemcpy(weights, d_weights_, sizeof(double)*np_, cudaMemcpyDeviceToHost));
+    checkCUDAError(cudaMemcpy(weights, d_weights_, sizeof(double)*N, cudaMemcpyDeviceToHost));
     /* copy particles back to host */
-    checkCUDAError(cudaMemcpy(px, d_particles_, sizeof(float)*np_, cudaMemcpyDeviceToHost));
-    checkCUDAError(cudaMemcpy(py, d_particles_+np_, sizeof(float)*np_, cudaMemcpyDeviceToHost));
-    checkCUDAError(cudaMemcpy(pangle, d_particles_+np_*2, sizeof(float)*np_, cudaMemcpyDeviceToHost));
+    checkCUDAError(cudaMemcpy(px, d_particles_, sizeof(float)*N, cudaMemcpyDeviceToHost));
+    checkCUDAError(cudaMemcpy(py, d_particles_+np_, sizeof(float)*N, cudaMemcpyDeviceToHost));
+    checkCUDAError(cudaMemcpy(pangle, d_particles_+np_*2, sizeof(float)*N, cudaMemcpyDeviceToHost));
 }
 
 void MCLGPU::set_sensor_table(double *sensorTable, int t_w)
 {
-    printf("## set_sensor_table called!  table_width: %d\n", t_w);
     table_width_ = t_w;
     int table_size = sizeof(double) * table_width_ * table_width_;
     checkCUDAError(cudaMalloc((void**)&d_sensorTable_, table_size));

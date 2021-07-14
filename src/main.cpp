@@ -47,6 +47,7 @@ int main(int argc, char** argv)
              * origin is the pose of cell[0][0] in world frame. Sometimes the map can be rotated.
              */
             ranges::OMap omap = ranges::OMap(map);
+#ifdef PRINT_INFO
             ROS_INFO("    resolution: %f", map.info.resolution);
             ROS_INFO("    width:      %d", map.info.width);
             ROS_INFO("    height:     %d", map.info.height);
@@ -60,7 +61,7 @@ int main(int argc, char** argv)
                      map.info.origin.orientation.z,
                      map.info.origin.orientation.w
                 );
-
+#endif
 
             /*
               @note
@@ -71,7 +72,7 @@ int main(int argc, char** argv)
             MCL mcl(omap, max_range/omap.world_scale);
 
             /* spawn another thread to handle callbacks */
-            std::thread thd_spin(spin_thread);
+            std::thread t_spin(spin_thread);
 
             ros::Rate r(100); // 100 Hz
             while (ros::ok())
@@ -79,8 +80,8 @@ int main(int argc, char** argv)
                 mcl.update();
                 r.sleep();
             }
-            if (thd_spin.joinable())
-                thd_spin.join();
+            if (t_spin.joinable())
+                t_spin.join();
         }
         else
         {
