@@ -845,14 +845,7 @@ double MCL::MCL_cpu()
     /*********************************************
      * Step 4: normalize the weights_  (but why?)
      *********************************************/
-    /*
-      @note
-      * std::reduce requires c++17
-      */
-    double sum_weight = std::reduce(weights_.begin(), weights_.end(), 0.0);
-    double maxW = *std::max_element(weights_.begin(), weights_.end());
-    std::transform(weights_.begin(), weights_.end(), weights_.begin(),
-                   [s = sum_weight](double w) {return w / s;});
+    double maxW = normalize_weight();
     return maxW;
 }
 
@@ -874,10 +867,7 @@ double MCL::MCL_gpu()
     /*********************************
      * Step 3: normalize the weights
      *********************************/
-    double sum_weight = std::reduce(weights_.begin(), weights_.end(), 0.0);
-    double maxW = *std::max_element(weights_.begin(), weights_.end());
-    std::transform(weights_.begin(), weights_.end(), weights_.begin(),
-                   [s = sum_weight](double w) {return w / s;});
+    double maxW = normalize_weight();
     return maxW;
 }
 
@@ -973,8 +963,6 @@ double MCL::MCL_hybrid()
     int N_gpu = particle_partition();
     int N_cpu = p_max_particles_ - N_gpu;
 
-    //printf("############ CPU before ################\n");
-    //print_particles(p_max_particles_);
     /*
      * This thread will propagate and evaluate the first N_gpu particles on GPU
      */
@@ -984,23 +972,30 @@ double MCL::MCL_hybrid()
      * The main thread will propagate (motion_model()) and evaluate (sensor_model())
      * the particles on CPU
      */
-    cpu_update(N_gpu, N_cpu);
+    t_cpu_update(N_gpu, N_cpu, p_cpu_threads_);
 
     t_test.join();
-
-    //printf("############ CPU after ################\n");
-    //print_particles(p_max_particles_);
 
     /*********************************
      * Step 3: normalize the weights
      *********************************/
+    double maxW = normalize_weight();
+    return maxW;
+}
+
+double MCL::normalize_weight()
+{
+    /*
+      @note
+      * std::reduce requires c++17
+      */
     double sum_weight = std::reduce(weights_.begin(), weights_.end(), 0.0);
     double maxW = *std::max_element(weights_.begin(), weights_.end());
     std::transform(weights_.begin(), weights_.end(), weights_.begin(),
                    [s = sum_weight](double w) {return w / s;});
     return maxW;
-
 }
+
 
 void MCL::MCL_adaptive(){}
 
@@ -1103,8 +1098,9 @@ void MCL::resampling()
     fvec_t particles_angle;
     select_particles(particles_x, particles_y, particles_angle, p_max_particles_);
 
-    std::copy(particles_x.begin(), particles_x.end(), particles_x_.begin());
-    std::copy(particles_y.begin(), particles_y.end(), particles_y_.begin());
+    particles_x_ = std::move(particles_x);
+    particles_y_ = std::move(particles_y);
+    particles_angle_ = std::move(particles_angle);
 }
 
 void MCL::print_particles(int n)

@@ -54,6 +54,7 @@ public:
     void motion_model(int start, int num_particles);
     void sensor_model(int start, int num_particles);
     void resampling();
+    double normalize_weight();
 
     void expected_pose();
     void publish_tf();
