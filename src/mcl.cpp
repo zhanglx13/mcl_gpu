@@ -1,6 +1,7 @@
 #include "mcl.h"
 #define _USE_MATH_DEFINES // for pi ==> M_PI
 #include <numeric> // for transform_reduce
+#include <thread>
 
 
 
@@ -16,7 +17,9 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     ros::NodeHandle private_nh_("~");
     private_nh_.getParam("angle_step", p_angle_step_);
     private_nh_.getParam("max_particles", p_max_particles_);
+    private_nh_.getParam("N_gpu", p_N_gpu_);
     private_nh_.getParam("max_viz_particles", p_max_viz_particles_);
+    private_nh_.getParam("cpu_threads", p_cpu_threads_);
     double tmp;
     private_nh_.getParam("squash_factor", tmp);
     p_inv_squash_factor_ = 1.0 / tmp;
@@ -44,7 +47,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     private_nh_.param("motion_dispersion_theta", p_motion_dispersion_theta_, 0.25f);
 
     p_max_range_px_ = static_cast<int> (max_range_px);
-
+#ifdef PRINT_INFO
     ROS_INFO("Parameters: ");
     ROS_INFO("    Angle step:            %d", p_angle_step_);
     ROS_INFO("    Max particles:         %d", p_max_particles_);
@@ -62,6 +65,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
 
     ROS_INFO("    which_impl:            %s", p_which_impl_.c_str());
     ROS_INFO("    which_viz:             %s", p_which_viz_.c_str());
+#endif
 
     lidar_initialized_ = 0;
     odom_initialized_ = 0;
@@ -120,7 +124,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     /*
      * Initialize the MCLGPU object
      */
-    if (!p_which_impl_.compare("gpu"))
+    if (!p_which_impl_.compare("gpu") || !p_which_impl_.compare("hybrid"))
     {
         mclgpu_ = new MCLGPU(p_max_particles_);
         mclgpu_->init_constants(
@@ -193,8 +197,8 @@ void MCL::get_omap()
             }
         }
     }
-    ROS_DEBUG("Process omap and count is %d, which is %f", count, count*1.0 / (map_width_*map_height_));
-    ROS_DEBUG("Number of free cells in the map: %ld", free_cell_id_.size());
+    //ROS_DEBUG("Process omap and count is %d, which is %f", count, count*1.0 / (map_width_*map_height_));
+    //ROS_DEBUG("Number of free cells in the map: %ld", free_cell_id_.size());
     map_initialized_ = true;
 
 #if 0
@@ -362,7 +366,7 @@ void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
         downsampled_angles_.resize(num_ranges_downsampled);
         for (int i = 0; i < num_ranges_downsampled; i ++)
             downsampled_angles_[i] = amin + i * p_angle_step_ * inc;
-        if (!p_which_impl_.compare("gpu"))
+        if (!p_which_impl_.compare("gpu") || !p_which_impl_.compare("hybrid"))
             mclgpu_->set_angles(downsampled_angles_.data());
     }
     /* down sample the range */
@@ -522,6 +526,8 @@ void MCL::update()
             maxW = MCL_gpu();
         else if (!p_which_impl_.compare("adaptive"))
             MCL_adaptive();
+        else if (!p_which_impl_.compare("hybrid"))
+            maxW = MCL_hybrid();
         else
             ROS_ERROR("The chosen method is not implemented yet");
 
@@ -797,11 +803,6 @@ double MCL::MCL_cpu()
     if (do_res_)
         resampling();
 
-    /***************************************************
-     * Step 2: apply the motion model to the particles
-     ***************************************************/
-    motion_model();
-
 #ifdef TESTING
     if (!init_pose_set_)
     {
@@ -826,11 +827,10 @@ double MCL::MCL_cpu()
     particles_y_[99] = init_pose_[1];
     particles_angle_[99] = init_pose_[2];
 #endif
-
-    /*********************************************************************
-     * Step 3: apply the sensor model to compute the weights of particles
-     *********************************************************************/
-    sensor_model();
+    /***************************************************
+     * Step 2-3: apply the motion model and sensor model
+     ***************************************************/
+    t_cpu_update(0, p_max_particles_, p_cpu_threads_);
 
 #ifdef TESTING
     int maxPIdx = std::max_element(weights_.begin(), weights_.end()) - weights_.begin();
@@ -845,14 +845,7 @@ double MCL::MCL_cpu()
     /*********************************************
      * Step 4: normalize the weights_  (but why?)
      *********************************************/
-    /*
-      @note
-      * std::reduce requires c++17
-      */
-    double sum_weight = std::reduce(weights_.begin(), weights_.end(), 0.0);
-    double maxW = *std::max_element(weights_.begin(), weights_.end());
-    std::transform(weights_.begin(), weights_.end(), weights_.begin(),
-                   [s = sum_weight](double w) {return w / s;});
+    double maxW = normalize_weight();
     return maxW;
 }
 
@@ -869,6 +862,25 @@ double MCL::MCL_gpu()
      * step 2: apply motion model to advance the particles and compute their weights
      * All done on GPU
      ********************************************************************************/
+    gpu_update(p_max_particles_);
+
+    /*********************************
+     * Step 3: normalize the weights
+     *********************************/
+    double maxW = normalize_weight();
+    return maxW;
+}
+
+/*
+ * Perform motion model and sensor model on GPU
+ * This function updates and evaluates the first N_gpu particles in the population
+ */
+void MCL::gpu_update(int N_gpu)
+{
+    /*
+     * Note the difference between mclgpu->update() called in MCL_gpu() is the number of
+     * particles used. Here we only launch N_gpu particles on GPU
+     */
     mclgpu_->update(
         /* inputs */
         /* particles */
@@ -876,11 +888,107 @@ double MCL::MCL_gpu()
         /* action, i.e. odometry_delta_ */
         odometry_delta_.data(), downsampled_ranges_.data(), (int)downsampled_ranges_.size(),
         /* output */
-        weights_.data());
+        weights_.data(),
+        /* number of particles */
+        N_gpu);
+}
+
+/*
+ * Perform the motion model and sensor model on CPU
+ * This function updates and evaluates num_particles particles starting from
+ * the start-th particle in the population.
+ *
+ * This function can be called by different threads with different ranges in
+ * the particles population.
+ */
+void MCL::cpu_update(int start, int num_particles)
+{
+    motion_model(start, num_particles);
+    sensor_model(start, num_particles);
+}
+
+/*
+ * Perform cpu_update in different threads concurrently
+ */
+void MCL::t_cpu_update(int start, int num_particles, int num_threads)
+{
+    /* single thread case, simply call cpu_update() */
+    if (num_threads == 1){
+        cpu_update(start, num_particles);
+        return;
+    }
+
+    /* Now num_threads is at least 2 */
+    int particles_per_thread = num_particles / num_threads;
+    int rem = num_particles - particles_per_thread * num_threads;
+
+    std::vector<std::thread> workers;
+    /* spawn num_threads std::threads to update */
+    for (int i = 0; i < num_threads; i ++){
+        auto t = std::thread(&MCL::cpu_update, this, start+i*particles_per_thread, particles_per_thread);
+        workers.push_back(std::move(t));
+    }
+
+    /* main thread deals with the remaining particles if there is any */
+    if (rem != 0){
+        cpu_update(start + num_particles - rem, rem);
+    }
+
+    /* join all threads */
+    std::for_each(workers.begin(), workers.end(), [](std::thread &t)
+        {
+            assert(t.joinable());
+            t.join();
+        });
+}
+
+int MCL::particle_partition()
+{
+    return p_N_gpu_;
+}
+
+double MCL::MCL_hybrid()
+{
+    /***************************************************
+     * step 1: Resampling
+     * using std::discrete_distribution
+     ***************************************************/
+    if (do_res_)
+        resampling();
+
+    /********************************************************************************
+     * step 2: apply motion model to advance the particles and compute their weights
+     * Distribute particles among CPU and GPU
+     ********************************************************************************/
+    int N_gpu = particle_partition();
+    int N_cpu = p_max_particles_ - N_gpu;
+
+    /*
+     * This thread will propagate and evaluate the first N_gpu particles on GPU
+     */
+    std::thread t_test(&MCL::gpu_update, this, N_gpu);
+
+    /*
+     * The main thread will propagate (motion_model()) and evaluate (sensor_model())
+     * the particles on CPU
+     */
+    t_cpu_update(N_gpu, N_cpu, p_cpu_threads_);
+
+    t_test.join();
 
     /*********************************
      * Step 3: normalize the weights
      *********************************/
+    double maxW = normalize_weight();
+    return maxW;
+}
+
+double MCL::normalize_weight()
+{
+    /*
+      @note
+      * std::reduce requires c++17
+      */
     double sum_weight = std::reduce(weights_.begin(), weights_.end(), 0.0);
     double maxW = *std::max_element(weights_.begin(), weights_.end());
     std::transform(weights_.begin(), weights_.end(), weights_.begin(),
@@ -888,9 +996,10 @@ double MCL::MCL_gpu()
     return maxW;
 }
 
+
 void MCL::MCL_adaptive(){}
 
-void MCL::motion_model()
+void MCL::motion_model(int start, int num_particles)
 {
     pose_t odelta;
     odom_mtx_.lock();
@@ -899,15 +1008,16 @@ void MCL::motion_model()
     odelta[2] = odometry_delta_[2];
     odom_mtx_.unlock();
     /* rotate the action into the coordinate space of each particle */
-    fvec_t cosines(p_max_particles_);
-    fvec_t sines(p_max_particles_);
-    std::transform(particles_angle_.begin(), particles_angle_.end(), cosines.begin(),
+    fvec_t cosines(num_particles);
+    fvec_t sines(num_particles);
+    int end = start + num_particles;
+    std::transform(particles_angle_.begin()+start, particles_angle_.begin()+end, cosines.begin(),
                    [](float theta) {return cos(theta);});
-    std::transform(particles_angle_.begin(), particles_angle_.end(), sines.begin(),
+    std::transform(particles_angle_.begin()+start, particles_angle_.begin()+end, sines.begin(),
                    [](float theta) {return sin(theta);});
 
-    fvec_t local_deltas_x(p_max_particles_);
-    fvec_t local_deltas_y(p_max_particles_);
+    fvec_t local_deltas_x(num_particles);
+    fvec_t local_deltas_y(num_particles);
     std::transform(cosines.begin(), cosines.end(),
                    sines.begin(),
                    local_deltas_x.begin(),
@@ -920,28 +1030,19 @@ void MCL::motion_model()
                        {return s*odelta[0]+c*odelta[1];});
     /* Add the local delta to each particle */
     unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
-    std::transform(particles_x_.begin(), particles_x_.end(),
+    std::transform(particles_x_.begin()+start, particles_x_.begin()+end,
                    local_deltas_x.begin(),
-                   particles_x_.begin(),
-                   [distribution = std::normal_distribution<float>(0.0, p_motion_dispersion_x_),
-                    generator = std::default_random_engine(seed)]
-                   (float x, float delta) mutable
-                       {return x + delta + distribution(generator);});
+                   particles_x_.begin()+start,
+                   PlusWithNoise<float>(seed, p_motion_dispersion_x_));
     seed = std::chrono::system_clock::now().time_since_epoch().count();
-    std::transform(particles_y_.begin(), particles_y_.end(),
+    std::transform(particles_y_.begin()+start, particles_y_.begin()+end,
                    local_deltas_y.begin(),
-                   particles_y_.begin(),
-                   [distribution = std::normal_distribution<float>(0.0, p_motion_dispersion_y_),
-                    generator = std::default_random_engine(seed)]
-                   (float y, float delta) mutable
-                       {return y + delta + distribution(generator);});
+                   particles_y_.begin()+start,
+                   PlusWithNoise<float>(seed, p_motion_dispersion_y_));
     seed = std::chrono::system_clock::now().time_since_epoch().count();
-    std::transform(particles_angle_.begin(), particles_angle_.end(),
-                   particles_angle_.begin(),
-                   [distribution = std::normal_distribution<float>(0.0, p_motion_dispersion_theta_),
-                    generator = std::default_random_engine(seed), odelta]
-                   (float angle) mutable
-                       {return angle + odelta[2] + distribution(generator);});
+    std::transform(particles_angle_.begin()+start, particles_angle_.begin()+end,
+                   particles_angle_.begin()+start,
+                   std::bind(PlusWithNoise<float>(seed, p_motion_dispersion_theta_), std::placeholders::_1, odelta[2]) );
 }
 
 /*
@@ -950,7 +1051,7 @@ void MCL::motion_model()
  *   2. Evaluate one range using the sensor_model_table
  *   3. Multiply scores from all ranges to make the weight of particle p
  */
-void MCL::sensor_model()
+void MCL::sensor_model(int start, int num_particles)
 {
     fvec_t ranges(downsampled_ranges_.size());
     range_mtx_.lock();
@@ -966,9 +1067,9 @@ void MCL::sensor_model()
          * can have coalesced memory access patterns when accessing particles.
          */
         rmgpu_.calc_range_eval_sensor_model_particle(
-            particles_x_, particles_y_, particles_angle_,
-            ranges, downsampled_angles_, weights_,
-            p_max_particles_, (int)downsampled_ranges_.size());
+            particles_x_.data()+start, particles_y_.data()+start, particles_angle_.data()+start,
+            ranges.data(), downsampled_angles_.data(), weights_.data()+start,
+            num_particles, (int)downsampled_ranges_.size());
 #if 0
         /* one thread compute one range */
         rmgpu_.calc_range_eval_sensor_model_angle(
@@ -980,10 +1081,10 @@ void MCL::sensor_model()
     else if (!p_which_rm_.compare("rm"))
     {
         rm_.calc_range_eval_sensor_model(
-            particles_x_.data(), particles_y_.data(), particles_angle_.data(),
+            particles_x_.data()+start, particles_y_.data()+start, particles_angle_.data()+start,
             ranges.data(), downsampled_angles_.data(),
-            weights_.data(),
-            p_max_particles_, (int)downsampled_angles_.size(), p_inv_squash_factor_);
+            weights_.data()+start,
+            num_particles, (int)downsampled_angles_.size(), p_inv_squash_factor_);
     }
     else
         ROS_ERROR("range method %s not recognized!", p_which_rm_.c_str());
@@ -997,8 +1098,9 @@ void MCL::resampling()
     fvec_t particles_angle;
     select_particles(particles_x, particles_y, particles_angle, p_max_particles_);
 
-    std::copy(particles_x.begin(), particles_x.end(), particles_x_.begin());
-    std::copy(particles_y.begin(), particles_y.end(), particles_y_.begin());
+    particles_x_ = std::move(particles_x);
+    particles_y_ = std::move(particles_y);
+    particles_angle_ = std::move(particles_angle);
 }
 
 void MCL::print_particles(int n)
