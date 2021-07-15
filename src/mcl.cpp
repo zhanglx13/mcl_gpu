@@ -19,6 +19,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     private_nh_.getParam("max_particles", p_max_particles_);
     private_nh_.getParam("N_gpu", p_N_gpu_);
     private_nh_.getParam("max_viz_particles", p_max_viz_particles_);
+    private_nh_.getParam("cpu_threads", p_cpu_threads_);
     double tmp;
     private_nh_.getParam("squash_factor", tmp);
     p_inv_squash_factor_ = 1.0 / tmp;
@@ -802,11 +803,6 @@ double MCL::MCL_cpu()
     if (do_res_)
         resampling();
 
-    /***************************************************
-     * Step 2: apply the motion model to the particles
-     ***************************************************/
-    motion_model(0, p_max_particles_);
-
 #ifdef TESTING
     if (!init_pose_set_)
     {
@@ -831,11 +827,10 @@ double MCL::MCL_cpu()
     particles_y_[99] = init_pose_[1];
     particles_angle_[99] = init_pose_[2];
 #endif
-
-    /*********************************************************************
-     * Step 3: apply the sensor model to compute the weights of particles
-     *********************************************************************/
-    sensor_model(0, p_max_particles_);
+    /***************************************************
+     * Step 2-3: apply the motion model and sensor model
+     ***************************************************/
+    t_cpu_update(0, p_max_particles_, p_cpu_threads_);
 
 #ifdef TESTING
     int maxPIdx = std::max_element(weights_.begin(), weights_.end()) - weights_.begin();
@@ -874,16 +869,7 @@ double MCL::MCL_gpu()
      * step 2: apply motion model to advance the particles and compute their weights
      * All done on GPU
      ********************************************************************************/
-    mclgpu_->update(
-        /* inputs */
-        /* particles */
-        particles_x_.data(), particles_y_.data(), particles_angle_.data(),
-        /* action, i.e. odometry_delta_ */
-        odometry_delta_.data(), downsampled_ranges_.data(), (int)downsampled_ranges_.size(),
-        /* output */
-        weights_.data(),
-        /* number of particles */
-        p_max_particles_);
+    gpu_update(p_max_particles_);
 
     /*********************************
      * Step 3: normalize the weights
@@ -895,7 +881,11 @@ double MCL::MCL_gpu()
     return maxW;
 }
 
-void MCL::t_gpu_update(int N_gpu)
+/*
+ * Perform motion model and sensor model on GPU
+ * This function updates and evaluates the first N_gpu particles in the population
+ */
+void MCL::gpu_update(int N_gpu)
 {
     /*
      * Note the difference between mclgpu->update() called in MCL_gpu() is the number of
@@ -911,6 +901,55 @@ void MCL::t_gpu_update(int N_gpu)
         weights_.data(),
         /* number of particles */
         N_gpu);
+}
+
+/*
+ * Perform the motion model and sensor model on CPU
+ * This function updates and evaluates num_particles particles starting from
+ * the start-th particle in the population.
+ *
+ * This function can be called by different threads with different ranges in
+ * the particles population.
+ */
+void MCL::cpu_update(int start, int num_particles)
+{
+    motion_model(start, num_particles);
+    sensor_model(start, num_particles);
+}
+
+/*
+ * Perform cpu_update in different threads concurrently
+ */
+void MCL::t_cpu_update(int start, int num_particles, int num_threads)
+{
+    /* single thread case, simply call cpu_update() */
+    if (num_threads == 1){
+        cpu_update(start, num_particles);
+        return;
+    }
+
+    /* Now num_threads is at least 2 */
+    int particles_per_thread = num_particles / num_threads;
+    int rem = num_particles - particles_per_thread * num_threads;
+
+    std::vector<std::thread> workers;
+    /* spawn num_threads std::threads to update */
+    for (int i = 0; i < num_threads; i ++){
+        auto t = std::thread(&MCL::cpu_update, this, start+i*particles_per_thread, particles_per_thread);
+        workers.push_back(std::move(t));
+    }
+
+    /* main thread deals with the remaining particles if there is any */
+    if (rem != 0){
+        cpu_update(start + num_particles - rem, rem);
+    }
+
+    /* join all threads */
+    std::for_each(workers.begin(), workers.end(), [](std::thread &t)
+        {
+            assert(t.joinable());
+            t.join();
+        });
 }
 
 int MCL::particle_partition()
@@ -939,14 +978,13 @@ double MCL::MCL_hybrid()
     /*
      * This thread will propagate and evaluate the first N_gpu particles on GPU
      */
-    std::thread t_test(&MCL::t_gpu_update, this, N_gpu);
+    std::thread t_test(&MCL::gpu_update, this, N_gpu);
 
     /*
      * The main thread will propagate (motion_model()) and evaluate (sensor_model())
      * the particles on CPU
      */
-    motion_model(N_gpu, N_cpu);
-    sensor_model(N_gpu, N_cpu);
+    cpu_update(N_gpu, N_cpu);
 
     t_test.join();
 

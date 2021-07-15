@@ -45,7 +45,9 @@ public:
     double MCL_cpu();
     double MCL_gpu();
     double MCL_hybrid();
-    void t_gpu_update(int N_gpu);
+    void gpu_update(int N_gpu);
+    void cpu_update(int start, int num_particles);
+    void t_cpu_update(int start, int num_particles, int num_threads);
     void MCL_adaptive();
     int particle_partition();
 
@@ -71,6 +73,7 @@ protected:
     int p_max_particles_;
     int p_N_gpu_;
     int p_max_viz_particles_;
+    int p_cpu_threads_;
     double p_inv_squash_factor_;
     float p_max_range_meters_;
     int p_theta_discretization_;

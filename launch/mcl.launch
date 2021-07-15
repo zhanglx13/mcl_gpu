@@ -24,6 +24,8 @@
                       to /pf/viz/inferred_pose and /pf/viz/particles. This is also
                       used to control whether to launch rviz for visualization.
        bag:           control whether rosbag is launched to play messages
+       cpu_threads:   the number of threads used to apply motion model and sensor
+                      model in MCL_cpu()
   -->
   <arg name="scan_topic" default="/scan"/>
   <!-- <arg name="odometry_topic" default="/vesc/odom"/> -->
@@ -39,6 +41,7 @@
   <arg name="which_viz" default="largest"/>
   <arg name="which_expect" default="largest"/>
   <arg name="init_var" default="5"/>
+  <arg name="cpu_threads" default="4"/>
 
   <!-- For the mcl_gpu package to work, a map needs to be loaded first -->
   <include file="$(find mcl_gpu)/launch/map_server.launch"/>
@@ -115,6 +118,7 @@
         More particles are needed if a large variance is used.
     -->
     <param name="init_var" value="$(arg init_var)"/>
+    <param name="cpu_threads" value="$(arg cpu_threads)"/>
 
   </node>
 </launch>
