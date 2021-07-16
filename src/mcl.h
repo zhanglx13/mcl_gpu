@@ -1,7 +1,7 @@
 #ifndef MCL_H_
 #define MCL_H_
 
-#include <boost/thread/mutex.hpp>
+#include <mutex>
 #include "ros/ros.h"
 
 #include "sensor_msgs/LaserScan.h"
@@ -44,11 +44,17 @@ public:
     /* different implementations of MCL algorithm */
     double MCL_cpu();
     double MCL_gpu();
+    double MCL_hybrid();
+    void gpu_update(int N_gpu);
+    void cpu_update(int start, int num_particles);
+    void t_cpu_update(int start, int num_particles, int num_threads);
     void MCL_adaptive();
+    int particle_partition();
 
-    void motion_model();
-    void sensor_model();
+    void motion_model(int start, int num_particles);
+    void sensor_model(int start, int num_particles);
     void resampling();
+    double normalize_weight();
 
     void expected_pose();
     void publish_tf();
@@ -66,7 +72,9 @@ protected:
     /* parameters */
     int p_angle_step_;
     int p_max_particles_;
+    int p_N_gpu_;
     int p_max_viz_particles_;
+    int p_cpu_threads_;
     double p_inv_squash_factor_;
     float p_max_range_meters_;
     int p_theta_discretization_;
@@ -173,8 +181,8 @@ protected:
     fvec_t viz_ranges_;
 
     /* mutex to protect shared data between threads */
-    boost::mutex odom_mtx_;
-    boost::mutex range_mtx_;
+    std::mutex odom_mtx_;
+    std::mutex range_mtx_;
 
     /* flag to control whether to perform resampling */
     int do_res_;
@@ -189,6 +197,22 @@ protected:
     float acc_error_y_;
     float acc_error_angle_;
     float acc_time_ms_;
+};
+
+template <class T>
+class PlusWithNoise
+{
+public:
+    PlusWithNoise(unsigned seed, T stddev) :
+        seed_(seed), stddev_(stddev),
+        dist_ (std::normal_distribution<T>(0.0, stddev_)),
+        gen_ (std::default_random_engine(seed_)) {}
+    T operator()(T a, T b) {return a + b + dist_(gen_); }
+private:
+    unsigned seed_;
+    T stddev_;
+    std::default_random_engine gen_;
+    std::normal_distribution<T> dist_;
 };
 
 #endif
