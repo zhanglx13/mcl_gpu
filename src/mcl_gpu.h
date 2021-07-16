@@ -19,7 +19,7 @@ public:
     void set_angles(float *angles);
     void update(float *px, float *py, float *pangle,
                 float *odom_delta, float *obs, int num_angles,
-                double *weights);
+                double *weights, int N);
     void set_sensor_table(double *sensorTable, int t_w);
     void set_map(ranges::OMap omap, float max_range);
 protected:

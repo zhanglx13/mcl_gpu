@@ -6,6 +6,7 @@
        which_impl:    choose the implementation of the MCL algorithm
                       - cpu: sequential implementation on CPU
                       - gpu: CUDA implementation on GPU
+                      - hybrid: particle partition among CPU and GPU
                       - adaptive: heterogeneous implementation on CPU + GPU
        which_rm:      choose the implementation of the ray marching algorithm
                       - rm: CPU implementation ==> RayMarching
@@ -23,12 +24,15 @@
                       to /pf/viz/inferred_pose and /pf/viz/particles. This is also
                       used to control whether to launch rviz for visualization.
        bag:           control whether rosbag is launched to play messages
+       cpu_threads:   the number of threads used to apply motion model and sensor
+                      model in MCL_cpu()
   -->
   <arg name="scan_topic" default="/scan"/>
   <!-- <arg name="odometry_topic" default="/vesc/odom"/> -->
   <arg name="odometry_topic" default="/odom"/>
   <arg name="angle_step" default="18"/>
   <arg name="max_particles" default="100"/>
+  <arg name="N_gpu" default="256"/>
   <arg name="squash_factor" default="2.2"/>
   <arg name="viz" default="1"/>
   <arg name="bag" default="1"/>
@@ -37,6 +41,7 @@
   <arg name="which_viz" default="largest"/>
   <arg name="which_expect" default="largest"/>
   <arg name="init_var" default="5"/>
+  <arg name="cpu_threads" default="4"/>
 
   <!-- For the mcl_gpu package to work, a map needs to be loaded first -->
   <include file="$(find mcl_gpu)/launch/map_server.launch"/>
@@ -82,6 +87,7 @@
     <!-- range data is downsampled by this factor -->
     <param name="angle_step" value="$(arg angle_step)"/>
     <param name="max_particles" value="$(arg max_particles)"/>
+    <param name="N_gpu" value="$(arg N_gpu)"/>
     <param name="max_viz_particles" value="200"/>
     <param name="squash_factor" value="$(arg squash_factor)"/>
     <param name="theta_discretization" value="112"/>
@@ -112,6 +118,7 @@
         More particles are needed if a large variance is used.
     -->
     <param name="init_var" value="$(arg init_var)"/>
+    <param name="cpu_threads" value="$(arg cpu_threads)"/>
 
   </node>
 </launch>

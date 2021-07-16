@@ -255,7 +255,7 @@ namespace ranges {
             world_angle = quaternion_to_angle(map.info.origin.orientation);
             world_sin_angle = sin(world_angle);
             world_cos_angle = cos(world_angle);
-
+#ifdef PRINT_INFO
             printf("OMap parameters:\n");
             printf("  width (x axis):  %d\n", width);
             printf("  height (y axis): %d\n", height);
@@ -265,6 +265,7 @@ namespace ranges {
             printf("  world_angle:     %f\n", world_angle);
             printf("  world_sin_angle: %f\n", world_sin_angle);
             printf("  world_cos_angle: %f\n", world_cos_angle);
+#endif
 
         }
 
@@ -980,10 +981,10 @@ namespace ranges {
          * This method uses one thread to do computation for one particle
          */
         void calc_range_eval_sensor_model_particle(
-            fvec_t px, fvec_t py, fvec_t pangle, // particles
-            fvec_t obs, // observation, i.e. downsampled_ranges_
-            fvec_t angles, // downsampled_angles_
-            std::vector<double> weights, // output, i.e. weight of each particle
+            float* px, float* py, float* pangle, // particles
+            float* obs, // observation, i.e. downsampled_ranges_
+            float* angles, // downsampled_angles_
+            double* weights, // output, i.e. weight of each particle
             int num_particles,
             int num_angles // number of downsampled angles
             ){
@@ -993,8 +994,8 @@ namespace ranges {
             return;
 #endif
             rmc->calc_range_eval_sensor_model_particle(
-                px.data(), py.data(), pangle.data(),
-                obs.data(), angles.data(), weights.data(),
+                px, py, pangle,
+                obs, angles, weights,
                 num_particles, num_angles
                 );
 #else
