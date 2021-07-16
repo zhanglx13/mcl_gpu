@@ -59,7 +59,8 @@ do for [a=1:words(arch)]{
     set print "table/" . word(arch, a) . "_" . colname . ".txt"
     do for [n in n_arr]{
         line = sprintf("%4d", n+0)
-        do for [var=1:5:1]{
+        do for [varX=1:3:1]{
+            var = varX * 2 - 1
             acc=0
             do for [i=1:10:1]{
                 stats sprintf("%s/result_%d_%d_%02d.txt", word(arch, a),n+0,var,i) \

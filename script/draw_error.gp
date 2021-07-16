@@ -20,17 +20,17 @@ do for [m=1:words(metric)]{
     set title "Averaged max weight of all runs"
     set key bottom right
     plot  @GPUfilename u 1:2 w l lw 1 lc rgb "red" t "GPU", \
-          for [c=2:5:1] @GPUfilename u 1:(column(c*2)) w l lw 1 lc rgb "red" t "", \
+          for [c=2:3:1] @GPUfilename u 1:(column(c*2)) w l lw 1 lc rgb "red" t "", \
           @CPUfilename u 1:2 w l lw 1 lc rgb "blue" t "CPU" ,\
-          for [c=2:5:1] @CPUfilename u 1:(column(c*2)) w l lw 1 lc rgb "blue" t ""
+          for [c=2:3:1] @CPUfilename u 1:(column(c*2)) w l lw 1 lc rgb "blue" t ""
     
     set title "stddev of max weight of all runs"
     set ylabel "standard deviation"
     set key top right
     plot  @GPUfilename u 1:3 w l lw 1 lc rgb "red" t "GPU", \
-          for [c=2:5:1] @GPUfilename u 1:(column(c*2+1)) w l lw 1 lc rgb "red" t "", \
+          for [c=2:3:1] @GPUfilename u 1:(column(c*2+1)) w l lw 1 lc rgb "red" t "", \
           @CPUfilename u 1:3 w l lw 1 lc rgb "blue" t "CPU" ,\
-          for [c=2:5:1] @CPUfilename u 1:(column(c*2+1)) w l lw 1 lc rgb "blue" t ""
+          for [c=2:3:1] @CPUfilename u 1:(column(c*2+1)) w l lw 1 lc rgb "blue" t ""
 }
 
 ##
@@ -93,7 +93,8 @@ do for [a=1:words(arch)]{
 
     do for [n in n_arr]{
         set o sprintf("fig/%s_all_runs_%s_%d.pdf", word(arch, a), colname,n+0)
-        do for [var=1:5:1]{
+        do for [var=1:3:1]{
+            var = varX * 2 - 1
             acc=0
             do for [i=1:10:1]{
                 stats sprintf("%s/result_%d_%d_%02d.txt", word(arch, a),n+0,var,i) \
