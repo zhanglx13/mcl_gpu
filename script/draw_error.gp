@@ -8,11 +8,11 @@ set xlabel "Number of particles"
 
 drawvline(x) = sprintf("set arrow front from %f, graph 0 to %f, graph 1 nohead dt 2 lw 1", x,x)
 GPUfilename="sprintf(\"table/GPU_%s.txt\", word(metric, m))"
-CPUfilename="sprintf(\"table/CPU_%s.txt\", word(metric, m))"
+CPUfilename="sprintf(\"table/CPU_MT8_%s.txt\", word(metric, m))"
 
 metric="maxW diffW"
 do for [m=1:words(metric)]{
-    set o sprintf("fig/avg_stddev_%s.pdf", word(metric, m))
+    set o sprintf("fig/avg_stddev_MT8_%s.pdf", word(metric, m))
     eval drawvline(2000)
     eval drawvline(4000)
     set ylabel "weight (lg(w*1e63))"
@@ -56,7 +56,7 @@ if (col == 12) {
 } else {
     colname="maxW"
 }
-arch="CPU GPU"
+arch="CPU_MT"
 unset key
 set grid
 set xlabel "iterations"
@@ -86,17 +86,18 @@ do for [a=1:words(arch)]{
     } else {
         ## CPU extra range
         n_arr = n_basic
-        do for [n=2000:15000:1000]{
+        do for [n=1200:2000:200]{
             n_arr = n_arr . n . " "
         }
     }
 
     do for [n in n_arr]{
-        set o sprintf("fig/%s_all_runs_%s_%d.pdf", word(arch, a), colname,n+0)
-        do for [var=1:5:1]{
+        set o sprintf("fig/%s8_all_runs_%s_%d.pdf", word(arch, a), colname,n+0)
+        do for [varX=1:3:1]{
+            var = varX * 2 - 1
             acc=0
             do for [i=1:10:1]{
-                stats sprintf("%s/result_%d_%d_%02d.txt", word(arch, a),n+0,var,i) \
+                stats sprintf("%s/result_%d_%d_8_%02d.txt", word(arch, a),n+0,var,i) \
                       u (log10(column(col)*1e63)) nooutput
                 eval sprintf("ave%d_%d_%d=%f", n+0,var,i, STATS_mean)
                 acc = acc + value(sprintf("ave%d_%d_%d", n+0,var,i))
@@ -109,7 +110,7 @@ do for [a=1:words(arch)]{
             }
             stddev = sqrt(sum / 10)
             set title sprintf("n=%d var=%d All Runs ave=%5.2f stddev=%f", n+0, var, acc, stddev)
-            plot for [i=1:10:1] sprintf("%s/result_%d_%d_%02d.txt", word(arch, a),n+0,var,i) \
+            plot for [i=1:10:1] sprintf("%s/result_%d_%d_8_%02d.txt", word(arch, a),n+0,var,i) \
                  u 2:(log10(column(col)*1e63))  w l lw 1
         }
     }
