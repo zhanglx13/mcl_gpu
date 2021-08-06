@@ -67,12 +67,6 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     ROS_INFO("    which_viz:             %s", p_which_viz_.c_str());
 #endif
 
-    lidar_initialized_ = 0;
-    odom_initialized_ = 0;
-    map_initialized_ = 0;
-    init_pose_set_ = 0;
-    do_res_ = 0;
-
     /*
      * Initialize particles and weights
      * Each particle has three components: x, y, and angle
@@ -83,6 +77,10 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     particles_x_.resize(p_max_particles_);
     particles_y_.resize(p_max_particles_);
     particles_angle_.resize(p_max_particles_);
+
+    px_.resize(p_max_particles_);
+    py_.resize(p_max_particles_);
+    pangle_.resize(p_max_particles_);
 
     /* these topics are for visualization */
     pose_pub_      = node_.advertise<geometry_msgs::PoseStamped>("/pf/viz/inferred_pose", 1);
@@ -152,12 +150,21 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     }
 #endif
 
+    /*
+     * allocate space and initialize downsampled_ranges_ and downsampled_angles_
+     * If NUM_ANGLES is not the correct number, ros will shutdown when the first
+     * lidar message comes.
+     */
+    downsampled_ranges_.resize(NUM_ANGLES);
+    downsampled_angles_.resize(NUM_ANGLES);
+
     ROS_INFO("Finished initializing, waiting on messages ...");
 }
 
 MCL::~MCL()
 {
     free(particles_);
+    free(sensor_model_table_);
     ROS_INFO("All done, bye yo!!");
 }
 
@@ -281,12 +288,6 @@ void MCL::precompute_sensor_model()
 #endif
 }
 
-/*
- * The following implementation is very slow, compared to the numpy version
- * (7.9 s vs. 0.005 s)
- *
- * TODO: try to use Eigen library
- */
 void MCL::initialize_global()
 {
     ROS_INFO("GLOBAL INITIALIZATION");
@@ -362,20 +363,22 @@ void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
             ROS_ERROR("Need to reset NUM_ANGLES to %d in CMakeLists.txt", num_ranges_downsampled);
             ros::shutdown();
         }
-        downsampled_ranges_.resize(num_ranges_downsampled);
-        downsampled_angles_.resize(num_ranges_downsampled);
+        // downsampled_ranges_.resize(num_ranges_downsampled);
+        // downsampled_angles_.resize(num_ranges_downsampled);
         for (int i = 0; i < num_ranges_downsampled; i ++)
             downsampled_angles_[i] = amin + i * p_angle_step_ * inc;
         if (!p_which_impl_.compare("gpu") || !p_which_impl_.compare("hybrid"))
             mclgpu_->set_angles(downsampled_angles_.data());
     }
-    /* down sample the range */
-    range_mtx_.lock();
-    for (int i = 0; i < num_ranges; i += p_angle_step_)
-        downsampled_ranges_[i/p_angle_step_] = msg.ranges[i];
-    std::replace_if(downsampled_ranges_.begin(), downsampled_ranges_.end(),
-                    [](float range){return range > 10.0;}, 10.0);
-    range_mtx_.unlock();
+    {
+        /* down sample the range */
+        std::lock_guard<std::mutex> rangeLock(range_mtx_);
+        for (int i = 0; i < num_ranges; i += p_angle_step_)
+            downsampled_ranges_[i/p_angle_step_] = msg.ranges[i];
+        /* limit the max range to be 10.0 */
+        std::replace_if(downsampled_ranges_.begin(), downsampled_ranges_.end(),
+                        [](float range){return range > 10.0;}, 10.0);
+    }
     lidar_initialized_ = 1;
 }
 
@@ -425,28 +428,28 @@ void MCL::odomCB(const nav_msgs::Odometry& msg)
     pose[0] = msg.pose.pose.position.x;
     pose[1] = msg.pose.pose.position.y;
     pose[2] = omap_.quaternion_to_angle(msg.pose.pose.orientation);
-    odom_mtx_.lock();
-    if (odom_initialized_ >= 1)
     {
-        /*
-         * Compute the delta between two odometry in the car's frame,
-         * in which x axis is forward and y axis is left
-         */
-        float c = cos(-last_pose_[2]);
-        float s = sin(-last_pose_[2]);
-        float dx = pose[0] - last_pose_[0];
-        float dy = pose[1] - last_pose_[1];
-        odometry_delta_[0] = c*dx-s*dy;
-        odometry_delta_[1] = s*dx+c*dy;
-        odometry_delta_[2] = pose[2] - last_pose_[2];
-        odom_initialized_ = 2;
+        std::lock_guard<std::mutex> odomLock(odom_mtx_);
+        if (odom_initialized_ >= 1)
+        {
+            /*
+             * Compute the delta between two odometry in the car's frame,
+             * in which x axis is forward and y axis is left
+             */
+            float c = cos(-last_pose_[2]);
+            float s = sin(-last_pose_[2]);
+            float dx = pose[0] - last_pose_[0];
+            float dy = pose[1] - last_pose_[1];
+            odometry_delta_[0] = c*dx-s*dy;
+            odometry_delta_[1] = s*dx+c*dy;
+            odometry_delta_[2] = pose[2] - last_pose_[2];
+            odom_initialized_ = 2;
+        }
+        else
+            odom_initialized_ = 1;
+        last_pose_ = pose;
+        last_stamp_ = msg.header.stamp;
     }
-    else
-        odom_initialized_ = 1;
-    last_pose_ = pose;
-    last_stamp_ = msg.header.stamp;
-    odom_mtx_.unlock();
-
     /* this topic is slower than lidar, so update every time we receive a message */
     //update();
 }
@@ -497,7 +500,6 @@ void MCL::rand_initCB(const geometry_msgs::PointStamped& msg)
 {
     ROS_INFO("clicked point set");
     initialize_global();
-
 }
 
 void MCL::update()
@@ -505,11 +507,10 @@ void MCL::update()
     if (lidar_initialized_ && odom_initialized_ == 2 && map_initialized_)
     {
         pose_t old_pose;
-        odom_mtx_.lock();
-        old_pose[0] = last_pose_[0];
-        old_pose[1] = last_pose_[1];
-        old_pose[2] = last_pose_[2];
-        odom_mtx_.unlock();
+        {
+            std::lock_guard<std::mutex> odomLock(odom_mtx_);
+            old_pose = last_pose_;
+        }
         timer_.tick();
         ros::Time t1 = ros::Time::now();
         double maxW;
@@ -552,11 +553,10 @@ void MCL::update()
          * calling odomCB to update last_pose_
          */
         pose_t new_pose;
-        odom_mtx_.lock();
-        new_pose[0] = last_pose_[0];
-        new_pose[1] = last_pose_[1];
-        new_pose[2] = last_pose_[2];
-        odom_mtx_.unlock();
+        {
+            std::lock_guard<std::mutex> odomLock(odom_mtx_);
+            new_pose = last_pose_;
+        }
         /*
          * calculate the weight of the inferred_pose_ according to
          * the new_pose using the sensor model.
@@ -764,9 +764,6 @@ void MCL::publish_particles(fvec_t px, fvec_t py, fvec_t pangle, int num_particl
  */
 void MCL::select_particles(fvec_t &px, fvec_t &py, fvec_t &pangle, int num_particles)
 {
-    px.resize(num_particles);
-    py.resize(num_particles);
-    pangle.resize(num_particles);
     /*
      * https://stackoverflow.com/questions/42926209/equivalent-function-to-numpy-random-choice-in-c
      * Use weights_ to construct a distribution
@@ -787,11 +784,11 @@ void MCL::select_particles(fvec_t &px, fvec_t &py, fvec_t &pangle, int num_parti
      * Note that the lambda need to capture this to access member variables of MCL
      * check: https://riptutorial.com/cplusplus/example/2461/class-lambdas-and-capture-of-this
      */
-    std::transform(indices.begin(), indices.end(), px.begin(),
+    std::transform(indices.begin(), indices.end(), px_.begin(),
                    [this](int index) {return particles_x_[index];});
-    std::transform(indices.begin(), indices.end(), py.begin(),
+    std::transform(indices.begin(), indices.end(), py_.begin(),
                    [this](int index) {return particles_y_[index];});
-    std::transform(indices.begin(), indices.end(), pangle.begin(),
+    std::transform(indices.begin(), indices.end(), pangle_.begin(),
                    [this](int index) {return particles_angle_[index];});
 }
 
@@ -1002,11 +999,10 @@ void MCL::MCL_adaptive(){}
 void MCL::motion_model(int start, int num_particles)
 {
     pose_t odelta;
-    odom_mtx_.lock();
-    odelta[0] = odometry_delta_[0];
-    odelta[1] = odometry_delta_[1];
-    odelta[2] = odometry_delta_[2];
-    odom_mtx_.unlock();
+    {
+        std::lock_guard<std::mutex> odomLock(odom_mtx_);
+        odelta = odometry_delta_;
+    }
     /* rotate the action into the coordinate space of each particle */
     fvec_t cosines(num_particles);
     fvec_t sines(num_particles);
@@ -1018,16 +1014,10 @@ void MCL::motion_model(int start, int num_particles)
 
     fvec_t local_deltas_x(num_particles);
     fvec_t local_deltas_y(num_particles);
-    std::transform(cosines.begin(), cosines.end(),
-                   sines.begin(),
-                   local_deltas_x.begin(),
-                   [odelta](float c, float s)
-                       {return c*odelta[0]-s*odelta[1];});
-    std::transform(cosines.begin(), cosines.end(),
-                   sines.begin(),
-                   local_deltas_y.begin(),
-                   [odelta](float c, float s)
-                       {return s*odelta[0]+c*odelta[1];});
+    std::transform(cosines.begin(), cosines.end(), sines.begin(), local_deltas_x.begin(),
+                   [odelta](float c, float s) {return c*odelta[0]-s*odelta[1];});
+    std::transform(cosines.begin(), cosines.end(), sines.begin(), local_deltas_y.begin(),
+                   [odelta](float c, float s) {return s*odelta[0]+c*odelta[1];});
     /* Add the local delta to each particle */
     unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::transform(particles_x_.begin()+start, particles_x_.begin()+end,
@@ -1042,7 +1032,8 @@ void MCL::motion_model(int start, int num_particles)
     seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::transform(particles_angle_.begin()+start, particles_angle_.begin()+end,
                    particles_angle_.begin()+start,
-                   std::bind(PlusWithNoise<float>(seed, p_motion_dispersion_theta_), std::placeholders::_1, odelta[2]) );
+                   std::bind(PlusWithNoise<float>(seed, p_motion_dispersion_theta_),
+                             std::placeholders::_1, odelta[2]) );
 }
 
 /*
@@ -1054,9 +1045,10 @@ void MCL::motion_model(int start, int num_particles)
 void MCL::sensor_model(int start, int num_particles)
 {
     fvec_t ranges(downsampled_ranges_.size());
-    range_mtx_.lock();
-    std::copy(downsampled_ranges_.begin(), downsampled_ranges_.end(), ranges.begin());
-    range_mtx_.unlock();
+    {
+        std::lock_guard<std::mutex> rangeLock(range_mtx_);
+        std::copy(downsampled_ranges_.begin(), downsampled_ranges_.end(), ranges.begin());
+    }
 
     if (!p_which_rm_.compare("rmgpu"))
     {
@@ -1093,14 +1085,11 @@ void MCL::sensor_model(int start, int num_particles)
 void MCL::resampling()
 {
     /* temp local vectors used by resampling */
-    fvec_t particles_x;
-    fvec_t particles_y;
-    fvec_t particles_angle;
-    select_particles(particles_x, particles_y, particles_angle, p_max_particles_);
+    select_particles(px_, py_, pangle_, p_max_particles_);
 
-    particles_x_ = std::move(particles_x);
-    particles_y_ = std::move(particles_y);
-    particles_angle_ = std::move(particles_angle);
+    particles_x_ = px_;
+    particles_y_ = py_;
+    particles_angle_ = pangle_;
 }
 
 void MCL::print_particles(int n)
