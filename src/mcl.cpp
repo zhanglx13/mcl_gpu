@@ -902,6 +902,15 @@ void MCL::cpu_update(int start, int num_particles)
 {
     motion_model(start, num_particles);
     sensor_model(start, num_particles);
+#if 0
+    /*
+     * Testing if software thread launching works
+     */
+    if (iter_ % 10 == 0) {
+        std::lock_guard<std::mutex> iolock(iomutex_);
+        std::cout<< "    thread " << pthread_self() << " on cpu "<< sched_getcpu() <<"\n";
+    }
+#endif
 }
 
 /*
@@ -916,20 +925,51 @@ void MCL::t_cpu_update(int start, int num_particles, int num_threads)
     }
 
     /* Now num_threads is at least 2 */
-    int particles_per_thread = num_particles / num_threads;
-    int rem = num_particles - particles_per_thread * num_threads;
+    /* ppt: particles per thread */
+    int ppt = num_particles / num_threads;
+    /* plt: particles last thread */
+    int plt = num_particles - ppt * (num_threads - 1);
+    /*
+     * current_cpu: the cpu id on which the current thread is executing
+     * current_sibling: the other logical cpu id that shares the same physical
+     * core with current_cpu
+     */
+    int current_cpu = sched_getcpu();
+    int current_sibling = (current_cpu + PCORES) > LCORES ?
+        current_cpu - PCORES : current_cpu + PCORES;
 
     std::vector<std::thread> workers;
-    /* spawn num_threads std::threads to update */
-    for (int i = 0; i < num_threads; i ++){
-        auto t = std::thread(&MCL::cpu_update, this, start+i*particles_per_thread, particles_per_thread);
-        workers.push_back(std::move(t));
+    int cpuid = 0;
+    int passed_current = 0;
+    /* spawn num_threads - 1 std::threads to update */
+    for (int i = 0; i < num_threads - 1; i ++){
+        /*
+         * Using emplacement with std::thread constructor arguments saves us
+         * a copy operation here.
+         */
+        workers.emplace_back(&MCL::cpu_update, this, start+i*ppt, ppt);
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        /*
+         * Heuristic of setting cpuid for thread[i]:
+         * We only skip current_cpu or current sibling for the first round
+         */
+        if ((cpuid == current_cpu || cpuid == current_sibling) && !passed_current) {
+            cpuid ++;
+            passed_current = 1;
+        }
+        if (cpuid >= LCORES) cpuid = 0;
+        CPU_SET(cpuid, &cpuset);
+        cpuid ++;
+        int rc = pthread_setaffinity_np(workers[i].native_handle(),
+                                        sizeof(cpu_set_t), &cpuset);
+        if (rc != 0) {
+            std::cerr << "Error calling pthread_setaffinity_np: " << rc << "\n";
+        }
     }
 
-    /* main thread deals with the remaining particles if there is any */
-    if (rem != 0){
-        cpu_update(start + num_particles - rem, rem);
-    }
+    /* main thread deals with the last group */
+    cpu_update(start + num_particles - plt, plt);
 
     /* join all threads */
     std::for_each(workers.begin(), workers.end(), [](std::thread &t)
