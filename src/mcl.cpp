@@ -345,7 +345,9 @@ void MCL::initialize_acc()
     acc_error_y_ = 0.0f;
     acc_error_angle_ = 0.0f;
     acc_time_ms_ = 0.0f;
+    acc_focus_time_ms_ = 0.0f;
     iter_ = 0;
+    focus_iter_ = 0;
 }
 
 void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
@@ -577,16 +579,25 @@ void MCL::update()
         dis_.append(dis);
         iter_ ++;
 
+        if (dis > 1.0)
+            do_res_ = 0;
+        else {
+            do_res_ = 1;
+            focus_iter_ ++;
+            acc_focus_time_ms_ += spi.toSec()*1000.0;;
+        }
+        float elapsedTime;
+        if (focus_iter_)
+            elapsedTime = acc_focus_time_ms_ / focus_iter_;
+        else
+            elapsedTime = acc_time_ms_ / iter_;
         /* print info per 10 iterations */
         if (iter_ != 0 && iter_ %10 == 0){
             printf("iter %4d time %7.4f ms interval %7.4f ms  maxW: %e  diffW: %e  dis: %7.4f\n",
-                   iter_, acc_time_ms_ / iter_, timer_.fps(),
+                   iter_, elapsedTime, timer_.fps(),
                    maxW_.mean(), diffW_.mean(), dis_.mean() );
 
-            if (dis > 1.0)
-                do_res_ = 0;
-            else
-                do_res_ = 1;
+
         }
     }
     visualize();
@@ -906,9 +917,11 @@ void MCL::cpu_update(int start, int num_particles)
     /*
      * Testing if software thread launching works
      */
-    if (iter_ % 10 == 0) {
+    if (iter_ && iter_ % 10 == 0) {
         std::lock_guard<std::mutex> iolock(iomutex_);
-        std::cout<< "    thread " << pthread_self() << " on cpu "<< sched_getcpu() <<"\n";
+        std::cout<< "    thread " << pthread_self() << " on cpu "<< sched_getcpu();
+        printf("  motion: %7.4f  sensor: %7.4f cnt: %6.3f  ==> total update: %7.4f\n",
+               motion_t, sensor_t, cnt, (motion_t+sensor_t));
     }
 #endif
 }

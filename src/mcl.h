@@ -195,6 +195,7 @@ private:
 
     /* info of each iteration of the MCL algorithm */
     int iter_;
+    int focus_iter_;
     Utils::Timer timer_;
     Utils::CircularArray<double> maxW_;
     Utils::CircularArray<double> diffW_;
@@ -203,6 +204,7 @@ private:
     float acc_error_y_;
     float acc_error_angle_;
     float acc_time_ms_;
+    float acc_focus_time_ms_;
 };
 
 template <class T>
