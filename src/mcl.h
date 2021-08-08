@@ -25,6 +25,10 @@ public:
     MCL(ranges::OMap omap, float max_range);
     ~MCL();
 
+    /* This is the only interface that is public to client */
+    void update();
+
+private:
     /* callback functions */
     void lidarCB(const sensor_msgs::LaserScan& msg);
     void odomCB(const nav_msgs::Odometry& msg);
@@ -40,7 +44,6 @@ public:
     double calc_diff(pose_t);
     float calc_dis(pose_t);
 
-    void update();
     /* different implementations of MCL algorithm */
     double MCL_cpu();
     double MCL_gpu();
@@ -68,7 +71,6 @@ public:
     void calc_range_one_pose(pose_t ins, fvec_t &ranges, bool printonly);
     void set_fake_angles_and_ranges(int pidx);
 
-protected:
     /* parameters */
     int p_angle_step_;
     int p_max_particles_;
@@ -128,14 +130,14 @@ protected:
     MCLGPU *mclgpu_;
 
     /* internal state used by the MCL algorithm */
-    int lidar_initialized_;
+    int lidar_initialized_{0};
     /*
      * 0: not receive any odom message yet
      * 1: received the first odom message
      * 2: odometry_delta_ is initialized
      */
-    int odom_initialized_;
-    int map_initialized_;
+    int odom_initialized_{0};
+    int map_initialized_{0};
 
     /*
      * Note that this is different from geometry_msgs::Pose in the way that
@@ -144,7 +146,7 @@ protected:
     pose_t last_pose_;
     pose_t inferred_pose_;
     pose_t init_pose_;
-    int init_pose_set_;
+    int init_pose_set_{0};
     /*
      * This is the difference between the newly received and the last odometry
      * in the car frame. There needs to be a conversion between the odom frame
@@ -173,6 +175,10 @@ protected:
     fvec_t particles_x_;
     fvec_t particles_y_;
     fvec_t particles_angle_;
+    /* temp particles used by resampling */
+    fvec_t px_;
+    fvec_t py_;
+    fvec_t pangle_;
 
     /* containers for range data */
     fvec_t downsampled_ranges_;
@@ -185,10 +191,11 @@ protected:
     std::mutex range_mtx_;
 
     /* flag to control whether to perform resampling */
-    int do_res_;
+    int do_res_{0};
 
     /* info of each iteration of the MCL algorithm */
     int iter_;
+    int focus_iter_;
     Utils::Timer timer_;
     Utils::CircularArray<double> maxW_;
     Utils::CircularArray<double> diffW_;
@@ -197,6 +204,7 @@ protected:
     float acc_error_y_;
     float acc_error_angle_;
     float acc_time_ms_;
+    float acc_focus_time_ms_;
 };
 
 template <class T>

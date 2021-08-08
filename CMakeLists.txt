@@ -4,6 +4,15 @@ project(mcl_gpu)
 ## TESTING mode
 #add_definitions(-DTESTING)
 
+## Query host system information
+cmake_host_system_information(RESULT host_name QUERY HOSTNAME)
+cmake_host_system_information(RESULT n_l_cores QUERY NUMBER_OF_LOGICAL_CORES)
+cmake_host_system_information(RESULT n_p_cores QUERY NUMBER_OF_PHYSICAL_CORES)
+add_definitions(-DHNAME="${host_name}")
+add_definitions(-DLCORES=${n_l_cores})
+add_definitions(-DPCORES=${n_p_cores})
+
+
 add_definitions(-DNUM_ANGLES=60)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
