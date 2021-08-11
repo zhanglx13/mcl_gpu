@@ -17,6 +17,9 @@
        which_expect:  choose how to compute the expected pose from the population
                       - largest: pick the particle with the largest weight
                       - ave: compute the weighted average of all particles
+       which_res:     choose the implementation of the resampling algorithm
+                      - cpu: sequential or multi-threading implementation on CPU
+                      - gpu: CUDA implementation using scanFan() and systematicRes()
        squash_factor: used when computing weights of each particle. The weight w
                       is transformed to pow(w, 1.0/squash_factor) so that we will
                       not dealing with too small weight values.
@@ -40,6 +43,7 @@
   <arg name="which_rm" default="rm"/>
   <arg name="which_viz" default="largest"/>
   <arg name="which_expect" default="largest"/>
+  <arg name="which_res" default="gpu"/>
   <arg name="init_var" default="5"/>
   <arg name="cpu_threads" default="4"/>
 

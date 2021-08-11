@@ -15,6 +15,7 @@
 
 #include "range_libc/RangeLib.h"
 #include "mcl_gpu.h"
+#include "resampling_gpu.h"
 #include "timer.h"
 
 
@@ -58,6 +59,8 @@ private:
     void sensor_model(int start, int num_particles);
     void resampling();
     double normalize_weight();
+    void resampling_gpu();
+    ResamplingGPU *resgpu_;
 
     void expected_pose();
     void publish_tf();
@@ -84,6 +87,7 @@ private:
     std::string p_which_impl_;
     std::string p_which_viz_;
     std::string p_which_expect_;
+    std::string p_which_res_;
     int p_publish_odom_;
     int p_do_viz_;
     float p_init_var_;
