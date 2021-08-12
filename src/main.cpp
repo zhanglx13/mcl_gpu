@@ -32,6 +32,12 @@ int main(int argc, char** argv)
 
     ros::NodeHandle node;
     ros::NodeHandle private_nh("~");
+    int NP;
+    private_nh.getParam("max_particles", NP);
+    if ( ( NP > NUM_THREADS ) && ( NP % NUM_THREADS != 0 ) ){
+        ROS_ERROR("max_particles must be a multiple of %d", NUM_THREADS);
+        ros::shutdown();
+    }
     float max_range;
     /*
       @note

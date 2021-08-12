@@ -29,6 +29,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     private_nh_.param("which_impl", p_which_impl_, std::string("cpu"));
     private_nh_.param("which_viz", p_which_viz_, std::string("largest"));
     private_nh_.param("which_expect", p_which_expect_, std::string("largest"));
+    private_nh_.param("which_res", p_which_res_, std::string("gpu"));
     private_nh_.param("publish_odom", p_publish_odom_, 1);
     private_nh_.getParam("viz", p_do_viz_);
     private_nh_.getParam("init_var", p_init_var_);
@@ -132,6 +133,8 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
             p_inv_squash_factor_);
         mclgpu_->set_sensor_table(sensor_model_table_, p_max_range_px_ + 1);
         mclgpu_->set_map(omap_, max_range_px);
+
+
 #ifdef TESTING
         /*
          * For testing only, set fake downsampled angles
@@ -149,7 +152,12 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
         MCL_cpu();
     }
 #endif
-
+    /*
+     * Initialize the GPU implementation of resampling
+     */
+    if (!p_which_res_.compare("gpu")){
+        resgpu_ = new ResamplingGPU(p_max_particles_, 3);
+    }
     /*
      * allocate space and initialize downsampled_ranges_ and downsampled_angles_
      * If NUM_ANGLES is not the correct number, ros will shutdown when the first
@@ -808,8 +816,14 @@ double MCL::MCL_cpu()
     /*************************************************
      * Step 1: Resampling using discrete_distribution
      *************************************************/
-    if (do_res_)
-        resampling();
+    if (do_res_){
+        if (!p_which_res_.compare("cpu"))
+            resampling();
+        else if (!p_which_res_.compare("gpu"))
+            resampling_gpu();
+        else
+            ROS_ERROR("Unrecognized resampling implementation %s", p_which_res_.c_str());
+    }
 
 #ifdef TESTING
     if (!init_pose_set_)
@@ -861,10 +875,15 @@ double MCL::MCL_gpu()
 {
     /***************************************************
      * step 1: Resampling
-     * using std::discrete_distribution
      ***************************************************/
-    if (do_res_)
-        resampling();
+    if (do_res_){
+        if (!p_which_res_.compare("cpu"))
+            resampling();
+        else if (!p_which_res_.compare("gpu"))
+            resampling_gpu();
+        else
+            ROS_ERROR("Unrecognized resampling implementation %s", p_which_res_.c_str());
+    }
 
     /********************************************************************************
      * step 2: apply motion model to advance the particles and compute their weights
@@ -1001,10 +1020,15 @@ double MCL::MCL_hybrid()
 {
     /***************************************************
      * step 1: Resampling
-     * using std::discrete_distribution
      ***************************************************/
-    if (do_res_)
-        resampling();
+    if (do_res_){
+        if (!p_which_res_.compare("cpu"))
+            resampling();
+        else if (!p_which_res_.compare("gpu"))
+            resampling_gpu();
+        else
+            ROS_ERROR("Unrecognized resampling implementation %s", p_which_res_.c_str());
+    }
 
     /********************************************************************************
      * step 2: apply motion model to advance the particles and compute their weights
@@ -1143,6 +1167,12 @@ void MCL::resampling()
     particles_x_ = px_;
     particles_y_ = py_;
     particles_angle_ = pangle_;
+}
+
+void MCL::resampling_gpu()
+{
+    resgpu_->doSystematicRes(particles_x_.data(),particles_y_.data(),
+                             particles_angle_.data(), weights_.data());
 }
 
 void MCL::print_particles(int n)
