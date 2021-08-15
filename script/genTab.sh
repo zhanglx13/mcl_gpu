@@ -8,7 +8,7 @@ gnuplot -e "col=10" process.gp
 gnuplot -e "col=12" process.gp
 
 # table for n iter time
-for arch in CPU_MT
+for arch in GPU
 do
 echo "Generating table/${arch}_time.txt"
     rm -f table/${arch}_time.txt
@@ -22,33 +22,36 @@ echo "Generating table/${arch}_time.txt"
         IFS='_' read -ra item <<< "$IN"
         n=${item[0]}
         var=${item[1]}
-        mt=${item[2]}
-        run=${item[3]}
+        #mt=${item[2]}
+        run=${item[2]}
         lastL=$(tail -n 1 $result | awk '{print $2, $4}')
-        echo "$n  $var  $mt  $run  $lastL" >> table/${arch}_time.txt
+        #echo "$n  $var  $mt  $run  $lastL" >> table/${arch}_time.txt
+        echo "$n  $var   $run  $lastL" >> table/${arch}_time.txt
     done
 done
 
 
 # aggregated table for n iter time
-for arch in CPU_MT
+for arch in GPU
 do
     #if [ $arch == "CPU" ]; then
     #    range=$(seq 100 100 1000)
     #else
     #    range=$(seq 100 100 1000; seq 1024 512 15360)
     #fi
-    n_range=$(seq 100 100 1000; seq 1200 200 2000)
-    mt_range=$(seq 1 1 1; seq 2 2 8)
+    n_range=$(seq 512 512 76800)
+    #mt_range=$(seq 1 1 1; seq 2 2 8)
     rm -f table/${arch}_time_agg.txt
     echo "Generating table/${arch}_time_agg.txt"
     for n in ${n_range}
     do
-        for mt in ${mt_range}
-        do
-            result=$(awk -v p=$n -v t=$mt '$1==p && $3==t {sIter += $5; sTime += $6} END {print sIter /30, sTime/30}' table/${arch}_time.txt)
+        #for mt in ${mt_range}
+        #do
+            #result=$(awk -v p=$n -v t=$mt '$1==p && $3==t {sIter += $5; sTime += $6} END {print sIter /30, sTime/30}' table/${arch}_time.txt)
+            result=$(awk -v p=$n  '$1==p  {sIter += $4; sTime += $5} END {print sIter /30, sTime/30}' table/${arch}_time.txt)
             split_results=($result)
-            printf "%4d  %2d %6.1f  %7.4f\n" $n $mt ${split_results[0]} ${split_results[1]} >> table/${arch}_time_agg.txt
-        done
+            #printf "%4d  %2d %6.1f  %7.4f\n" $n $mt ${split_results[0]} ${split_results[1]} >> table/${arch}_time_agg.txt
+            printf "%4d  %6.1f  %7.4f\n" $n ${split_results[0]} ${split_results[1]} >> table/${arch}_time_agg.txt
+        #done
     done
 done

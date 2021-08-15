@@ -16,6 +16,13 @@ do for [m=1:words(metric)]{
     eval drawvline(2000)
     eval drawvline(4000)
     set ylabel "weight (lg(w*1e63))"
+    ##
+    ## GPU has data up to 76800. However, CPU has data only around 3072.
+    ## It make no sense to draw that much of GPU data as long as we show
+    ## the point, i.e. the more the particles, the more stable of the
+    ## MCL algorithm.
+    ##
+    set xrange [0:20000]
     
     set title "Averaged max weight of all runs"
     set key bottom right
@@ -79,14 +86,14 @@ do for [a=1:words(arch)]{
 
     if (word(arch,a) eq "GPU"){
         ## GPU extra range
-        n_arr = n_basic
-        do for [n=1024:15360:512]{
+        n_arr=""
+        do for [n=512:76800:512]{
             n_arr = n_arr . n . " "
         }
     } else {
         ## CPU extra range
-        n_arr = n_basic
-        do for [n=1200:2000:200]{
+        n_arr=""
+        do for [n=256:3072:256]{
             n_arr = n_arr . n . " "
         }
     }

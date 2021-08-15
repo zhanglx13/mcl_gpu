@@ -31,7 +31,7 @@ if (col == 12) {
     }
 }
 
-arch="CPU_MT"
+arch="GPU"
 
 n_basic=""
 do for [n=100:1000:100]{
@@ -42,28 +42,29 @@ do for [a=1:words(arch)]{
 
     if (word(arch,a) eq "GPU"){
         ## GPU extra range
-        n_arr = n_basic
-        do for [n=1024:15360:512]{
+        #n_arr = n_basic
+        n_arr=""
+        do for [n=512:76800:512]{
             n_arr = n_arr . n . " "
         }
     } else {
         ## CPU extra range
-        n_arr = n_basic
-        do for [n=1200:2000:200]{
+        n_arr=""
+        do for [n=256:3072:256]{
             n_arr = n_arr . n . " "
         }
     }
 
     set print "-"
     print "Generating table/" . word(arch, a) . "_" . colname . ".txt"
-    set print "table/" . word(arch, a) . "8_" . colname . ".txt"
+    set print "table/" . word(arch, a) . "_" . colname . ".txt"
     do for [n in n_arr]{
         line = sprintf("%4d", n+0)
         do for [varX=1:3:1]{
             var = varX * 2 - 1
             acc=0
             do for [i=1:10:1]{
-                stats sprintf("%s/result_%d_%d_8_%02d.txt", word(arch, a),n+0,var,i) \
+                stats sprintf("%s/result_%d_%d_%02d.txt", word(arch, a),n+0,var,i) \
                       u @colfun nooutput
                 eval sprintf("ave%d_%d_%d=%f", n+0,var,i, STATS_mean)
                 x = @accval
