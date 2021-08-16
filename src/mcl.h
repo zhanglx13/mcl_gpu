@@ -2,6 +2,7 @@
 #define MCL_H_
 
 #include <mutex>
+#include <tuple>
 #include "ros/ros.h"
 
 #include "sensor_msgs/LaserScan.h"
@@ -46,9 +47,9 @@ private:
     float calc_dis(pose_t);
 
     /* different implementations of MCL algorithm */
-    double MCL_cpu();
-    double MCL_gpu();
-    double MCL_hybrid();
+    std::tuple<float, float, float> MCL_cpu();
+    std::tuple<float, float, float> MCL_gpu();
+    std::tuple<float, float, float> MCL_hybrid();
     void gpu_update(int N_gpu);
     void cpu_update(int start, int num_particles);
     void t_cpu_update(int start, int num_particles, int num_threads);
@@ -209,6 +210,11 @@ private:
     float acc_error_angle_;
     float acc_time_ms_;
     float acc_focus_time_ms_;
+
+    float acc_res_;
+    float acc_update_;
+    float acc_total_;
+    float acc_expect_;
 };
 
 template <class T>

@@ -356,6 +356,11 @@ void MCL::initialize_acc()
     acc_focus_time_ms_ = 0.0f;
     iter_ = 0;
     focus_iter_ = 0;
+
+    acc_res_ = 0.0f;
+    acc_update_ = 0.0f;
+    acc_total_ = 0.0f;
+    acc_expect_ = 0.0f;
 }
 
 void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
@@ -522,8 +527,9 @@ void MCL::update()
             old_pose = last_pose_;
         }
         timer_.tick();
-        ros::Time t1 = ros::Time::now();
-        double maxW;
+        auto t0 = ros::Time::now();
+        //double maxW;
+        std::tuple<float, float, float> timing_results;
         /*
          * one step of MCL algorithm:
          *   1. resampling
@@ -532,31 +538,35 @@ void MCL::update()
          *   4. normalize particle weights
          */
         if (!p_which_impl_.compare("cpu"))
-            maxW = MCL_cpu();
+            timing_results  = MCL_cpu();
         else if (!p_which_impl_.compare("gpu"))
-            maxW = MCL_gpu();
+            timing_results = MCL_gpu();
         else if (!p_which_impl_.compare("adaptive"))
             MCL_adaptive();
         else if (!p_which_impl_.compare("hybrid"))
-            maxW = MCL_hybrid();
+            timing_results = MCL_hybrid();
         else
             ROS_ERROR("The chosen method is not implemented yet");
 
+        auto t1 = ros::Time::now();
         /* update inferred_pose_ */
         expected_pose();
 
-        ros::Time t2 = ros::Time::now();
+        auto t2 = ros::Time::now();
 
         /* publish transformation frame based on inferred pose */
         //publish_tf();
 
         /* seconds per iteration */
-        ros::Duration spi = t2 - t1;
+        // ros::Duration spi = t2 - t1;
+        auto MCL_t = (t2 - t0).toSec()*1000.0;
+        auto expect_t = (t2 - t1).toSec()*1000.0;
 
         /* accumulate duration */
-        acc_time_ms_ += spi.toSec()*1000.0;
+        acc_time_ms_ += MCL_t;
+        acc_expect_ += expect_t;
         /* record max weight of this iteration */
-        maxW_.append(maxW);
+        //maxW_.append(maxW);
         /*
          * obtain the current pose.
          * A mutex is used since the ros::spin() thread might be
@@ -592,20 +602,26 @@ void MCL::update()
         else {
             do_res_ = 1;
             focus_iter_ ++;
-            acc_focus_time_ms_ += spi.toSec()*1000.0;;
+            acc_focus_time_ms_ += MCL_t;
+            acc_res_  += std::get<0>(timing_results);
         }
-        float elapsedTime;
+        float ave_res;
         if (focus_iter_)
-            elapsedTime = acc_focus_time_ms_ / focus_iter_;
+            ave_res = acc_res_ / focus_iter_;
         else
-            elapsedTime = acc_time_ms_ / iter_;
+            ave_res = 0.0f;
+
+        acc_update_ += std::get<1>(timing_results);
+        acc_total_  += std::get<2>(timing_results);
         /* print info per 10 iterations */
         if (iter_ != 0 && iter_ %10 == 0){
-            printf("iter %4d time %7.4f ms interval %7.4f ms  maxW: %e  diffW: %e  dis: %7.4f\n",
-                   iter_, elapsedTime, timer_.fps(),
-                   maxW_.mean(), diffW_.mean(), dis_.mean() );
-
-
+            // printf("iter %4d time %7.4f ms interval %7.4f ms  maxW: %e  diffW: %e  dis: %7.4f\n",
+            //        iter_, elapsedTime, timer_.fps(),
+            //        maxW_.mean(), diffW_.mean(), dis_.mean() );
+            printf("iter %4d res: %7.4f update: %7.4f total: %7.4f "
+                   "|| expect: %7.4f MCL: %7.4f interval %7.4f  diffW: %e  dis: %7.4f\n",
+                   iter_, ave_res, acc_update_ / iter_, acc_total_ / iter_,
+                   acc_expect_ / iter_, acc_time_ms_ / iter_ , timer_.fps(), diffW_.mean(), dis_.mean() );
         }
     }
     visualize();
@@ -811,11 +827,12 @@ void MCL::select_particles(fvec_t &px, fvec_t &py, fvec_t &pangle, int num_parti
                    [this](int index) {return particles_angle_[index];});
 }
 
-double MCL::MCL_cpu()
+std::tuple<float, float, float> MCL::MCL_cpu()
 {
     /*************************************************
      * Step 1: Resampling using discrete_distribution
      *************************************************/
+    auto t0 = ros::Time::now();
     if (do_res_){
         if (!p_which_res_.compare("cpu"))
             resampling();
@@ -824,6 +841,8 @@ double MCL::MCL_cpu()
         else
             ROS_ERROR("Unrecognized resampling implementation %s", p_which_res_.c_str());
     }
+
+    auto t1 = ros::Time::now();
 
 #ifdef TESTING
     if (!init_pose_set_)
@@ -854,6 +873,8 @@ double MCL::MCL_cpu()
      ***************************************************/
     t_cpu_update(0, p_max_particles_, p_cpu_threads_);
 
+    auto t2 = ros::Time::now();
+
 #ifdef TESTING
     int maxPIdx = std::max_element(weights_.begin(), weights_.end()) - weights_.begin();
     pose_t ins;
@@ -867,15 +888,20 @@ double MCL::MCL_cpu()
     /*********************************************
      * Step 4: normalize the weights_  (but why?)
      *********************************************/
-    double maxW = normalize_weight();
-    return maxW;
+    // double maxW = normalize_weight();
+
+    auto res_t = (t1 - t0).toSec()*1000.0;
+    auto update_t = (t2 - t1).toSec()*1000.0;
+    auto total_t = (t2 - t0).toSec()*1000.0;
+    return std::make_tuple(res_t, update_t, total_t);
 }
 
-double MCL::MCL_gpu()
+std::tuple<float, float, float> MCL::MCL_gpu()
 {
     /***************************************************
      * step 1: Resampling
      ***************************************************/
+    auto t0 = ros::Time::now();
     if (do_res_){
         if (!p_which_res_.compare("cpu"))
             resampling();
@@ -885,17 +911,24 @@ double MCL::MCL_gpu()
             ROS_ERROR("Unrecognized resampling implementation %s", p_which_res_.c_str());
     }
 
+    auto t1 = ros::Time::now();
     /********************************************************************************
      * step 2: apply motion model to advance the particles and compute their weights
      * All done on GPU
      ********************************************************************************/
     gpu_update(p_max_particles_);
 
+    auto t2 = ros::Time::now();
     /*********************************
      * Step 3: normalize the weights
      *********************************/
-    double maxW = normalize_weight();
-    return maxW;
+    // double maxW = normalize_weight();
+
+    auto res_t = (t1 - t0).toSec()*1000.0;
+    auto update_t = (t2 - t1).toSec()*1000.0;
+    auto total_t = (t2 - t0).toSec()*1000.0;
+
+    return std::make_tuple(res_t, update_t, total_t);
 }
 
 /*
@@ -1016,11 +1049,22 @@ int MCL::particle_partition()
     return p_N_gpu_;
 }
 
-double MCL::MCL_hybrid()
+void set_affinity(std::thread & t, int cpuid)
+{
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(cpuid, &cpuset);
+    int rc = pthread_setaffinity_np(t.native_handle(), sizeof(cpu_set_t), &cpuset);
+    if (rc != 0)
+        std::cerr << "Error calling pthread_setaffinity_np: " << rc << "\n";
+}
+
+std::tuple<float, float, float> MCL::MCL_hybrid()
 {
     /***************************************************
      * step 1: Resampling
      ***************************************************/
+    auto t0 = ros::Time::now();
     if (do_res_){
         if (!p_which_res_.compare("cpu"))
             resampling();
@@ -1037,24 +1081,41 @@ double MCL::MCL_hybrid()
     int N_gpu = particle_partition();
     int N_cpu = p_max_particles_ - N_gpu;
 
+    auto t1 = ros::Time::now();
     /*
      * This thread will propagate and evaluate the first N_gpu particles on GPU
+     * And we put this thread on the last physical core
      */
     std::thread t_test(&MCL::gpu_update, this, N_gpu);
 
+    set_affinity(t_test, PCORES-1);
+
+    auto t2 = ros::Time::now();
     /*
      * The main thread will propagate (motion_model()) and evaluate (sensor_model())
      * the particles on CPU
      */
-    t_cpu_update(N_gpu, N_cpu, p_cpu_threads_);
+    //t_cpu_update(N_gpu, N_cpu, p_cpu_threads_);
+    t_cpu_update(N_gpu, N_cpu, PCORES-1);
+    auto t3 = ros::Time::now();
 
     t_test.join();
+
+    auto t4 = ros::Time::now();
 
     /*********************************
      * Step 3: normalize the weights
      *********************************/
-    double maxW = normalize_weight();
-    return maxW;
+    //double maxW = normalize_weight();
+
+    auto res_t = (t1 - t0).toSec()*1000.0;
+    auto gpu_thread_t = (t2 - t1).toSec()*1000.0;
+    auto cpu_t = (t3 - t2).toSec()*1000.0;
+    auto total_cpu_gpu_t = (t4 - t1).toSec()*1000.0;
+    auto wait_t = (t4 - t3).toSec()*1000.0;
+    auto total_t = res_t + total_cpu_gpu_t;
+
+    return std::make_tuple(res_t, total_cpu_gpu_t, total_t);
 }
 
 double MCL::normalize_weight()
