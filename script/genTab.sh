@@ -29,6 +29,7 @@ echo "Generating table/${arch}_time.txt"
     done
 done
 
+
 # aggregated table for n iter time
 for arch in CPU_jetson GPU_jetson
 do
@@ -40,7 +41,7 @@ do
     mt_range=$(seq 1 1 1; seq 2 2 6)
     rm -f table/${arch}_time_agg.txt
     echo "Generating table/${arch}_time_agg.txt"
-    for n in $range
+    for n in ${n_range}
     do
         for mt in ${mt_range}
         do

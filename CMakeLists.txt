@@ -4,6 +4,15 @@ project(mcl_gpu)
 ## TESTING mode
 #add_definitions(-DTESTING)
 
+## Query host system information
+cmake_host_system_information(RESULT host_name QUERY HOSTNAME)
+cmake_host_system_information(RESULT n_l_cores QUERY NUMBER_OF_LOGICAL_CORES)
+cmake_host_system_information(RESULT n_p_cores QUERY NUMBER_OF_PHYSICAL_CORES)
+add_definitions(-DHNAME="${host_name}")
+add_definitions(-DLCORES=${n_l_cores})
+add_definitions(-DPCORES=${n_p_cores})
+
+
 add_definitions(-DNUM_ANGLES=60)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
@@ -207,12 +216,22 @@ if (WITH_CUDA)
   CUDA_ADD_LIBRARY(cudaMCLLib ${LIB_TYPE}
     src/mcl_gpu.cu)
 
+  CUDA_ADD_LIBRARY(cudaResLib ${LIB_TYPE}
+    src/resampling_gpu.cu)
+
+  CUDA_ADD_LIBRARY(cudaScanLib ${LIB_TYPE}
+    src/scanFan_no_mm.cu
+    src/scan_kernel.cu)
+
   add_executable(mcl_gpu ${SRCS})
+
+  target_link_libraries(cudaResLib cudaScanLib)
 
   target_link_libraries(mcl_gpu
     ${catkin_LIBRARIES}
     cudaRMLib
     cudaMCLLib
+    cudaResLib
     )
 
   add_dependencies(mcl_gpu
@@ -220,6 +239,7 @@ if (WITH_CUDA)
     ${catkin_EXPORTED_TARGETS}
     cudaRMLib
     cudaMCLLib
+    cudaResLib
     )
 else()
   add_definitions(-DUSE_CUDA=0)

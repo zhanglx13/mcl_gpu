@@ -1,5 +1,5 @@
 ##
-## Process each result_n_var_run.txt and obtain the following information
+## Process each result_n_var_8_run.txt and obtain the following information
 ##
 ## 1. For each single file, compute the average of column `col`
 ## 2. For each (n, var) pair, comptue the average and std dev of `col`'s  among all runs

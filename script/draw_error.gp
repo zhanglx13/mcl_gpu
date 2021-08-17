@@ -16,6 +16,13 @@ do for [m=1:words(metric)]{
     eval drawvline(2000)
     eval drawvline(4000)
     set ylabel "weight (lg(w*1e63))"
+    ##
+    ## GPU has data up to 76800. However, CPU has data only around 3072.
+    ## It make no sense to draw that much of GPU data as long as we show
+    ## the point, i.e. the more the particles, the more stable of the
+    ## MCL algorithm.
+    ##
+    set xrange [0:20000]
     
     set title "Averaged max weight of all runs"
     set key bottom right
@@ -97,7 +104,7 @@ do for [a=1:words(arch)]{
             var = varX * 2 - 1
             acc=0
             do for [i=1:10:1]{
-                stats sprintf("%s/result_%d_%d_%02d.txt", word(arch, a),n+0,var,i) \
+                stats sprintf("%s/result_%d_%d_8_%02d.txt", word(arch, a),n+0,var,i) \
                       u (log10(column(col)*1e63)) nooutput
                 eval sprintf("ave%d_%d_%d=%f", n+0,var,i, STATS_mean)
                 acc = acc + value(sprintf("ave%d_%d_%d", n+0,var,i))
@@ -110,7 +117,7 @@ do for [a=1:words(arch)]{
             }
             stddev = sqrt(sum / 10)
             set title sprintf("n=%d var=%d All Runs ave=%5.2f stddev=%f", n+0, var, acc, stddev)
-            plot for [i=1:10:1] sprintf("%s/result_%d_%d_%02d.txt", word(arch, a),n+0,var,i) \
+            plot for [i=1:10:1] sprintf("%s/result_%d_%d_8_%02d.txt", word(arch, a),n+0,var,i) \
                  u 2:(log10(column(col)*1e63))  w l lw 1
         }
     }
