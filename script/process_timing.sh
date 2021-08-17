@@ -1,11 +1,12 @@
 #! /usr/bin/env bash
 
-result_dir=GPU
+result_dir=jetson_CPU_MT5
 
-echo "n        res     update   total     expect  MCL" > gpu_timing.txt
+#echo "n        res     update   total     expect  MCL" > jetson_gpu_timing.txt
+echo "n        res     update   total     expect  MCL" > jetson_cpu_mt5_timing.txt
 
-for n in `seq 256 256 768; seq 1024 1024 10240; seq 16384 4096 122880`
-#for n in `seq 20 20 200; seq 256 256 3072`
+#for n in `seq 256 256 768; seq 1024 1024 10240; seq 12288 4096 40960`
+for n in `seq 256 256 2560`
 do
     echo "n is $n"
     cnt=0
@@ -14,7 +15,8 @@ do
     acc_total=0
     acc_expect=0
     acc_MCL=0
-    for result in ./${result_dir}/result_${n}_*.txt
+    #for result in ./${result_dir}/result_${n}_*.txt
+    for result in ./${result_dir}/result_mt5_${n}_*.txt
     do
         lastL=$(tail -n 1 $result |
         #                      res  update total expect MCL  dis
@@ -37,5 +39,6 @@ do
     total=$(echo "$acc_total / $cnt" | bc -l)
     expect=$(echo "$acc_expect / $cnt" | bc -l)
     MCL=$(echo "$acc_MCL / $cnt" | bc -l)
-    printf "%6d  %7.4f  %7.4f  %7.4f  %7.4f %7.4f\n" $n  $res  $update  $total  $expect  $MCL >> gpu_timing.txt
+    #printf "%6d  %7.4f  %7.4f  %7.4f  %7.4f %7.4f\n" $n  $res  $update  $total  $expect  $MCL >> jetson_gpu_timing.txt
+    printf "%6d  %7.4f  %7.4f  %7.4f  %7.4f %7.4f\n" $n  $res  $update  $total  $expect  $MCL >> jetson_cpu_mt5_timing.txt
 done
