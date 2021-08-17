@@ -12,6 +12,17 @@ void spin_thread()
 
 int main(int argc, char** argv)
 {
+    const pid_t pid = getpid();
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(0, &cpuset);
+    const int set_result = sched_setaffinity(pid, sizeof(cpu_set_t), &cpuset);
+    if (set_result != 0) {
+        ROS_ERROR("sched_setaffinity: %d", set_result);
+    }
+
+    std::cout << "main thread "<< pthread_self() << " on cpu " << sched_getcpu() << "\n";
+
     if( ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Debug) ) {
         ros::console::notifyLoggerLevelsChanged();
     }
@@ -21,6 +32,12 @@ int main(int argc, char** argv)
 
     ros::NodeHandle node;
     ros::NodeHandle private_nh("~");
+    int NP;
+    private_nh.getParam("max_particles", NP);
+    if ( ( NP > NUM_THREADS ) && ( NP % NUM_THREADS != 0 ) ){
+        ROS_ERROR("max_particles must be a multiple of %d", NUM_THREADS);
+        ros::shutdown();
+    }
     float max_range;
     /*
       @note
@@ -61,6 +78,12 @@ int main(int argc, char** argv)
                      map.info.origin.orientation.z,
                      map.info.origin.orientation.w
                 );
+            /*
+             * HNAME, PCORES, and LCORES are figured out and defined by CMake
+             */
+            std::cout<< "hostname: " << HNAME << "\n";
+            printf("physical cores: %d\n", PCORES);
+            printf("logical cores: %d\n", LCORES);
 #endif
 
             /*

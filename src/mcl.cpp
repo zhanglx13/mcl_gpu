@@ -29,6 +29,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     private_nh_.param("which_impl", p_which_impl_, std::string("cpu"));
     private_nh_.param("which_viz", p_which_viz_, std::string("largest"));
     private_nh_.param("which_expect", p_which_expect_, std::string("largest"));
+    private_nh_.param("which_res", p_which_res_, std::string("gpu"));
     private_nh_.param("publish_odom", p_publish_odom_, 1);
     private_nh_.getParam("viz", p_do_viz_);
     private_nh_.getParam("init_var", p_init_var_);
@@ -67,12 +68,6 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     ROS_INFO("    which_viz:             %s", p_which_viz_.c_str());
 #endif
 
-    lidar_initialized_ = 0;
-    odom_initialized_ = 0;
-    map_initialized_ = 0;
-    init_pose_set_ = 0;
-    do_res_ = 0;
-
     /*
      * Initialize particles and weights
      * Each particle has three components: x, y, and angle
@@ -83,6 +78,10 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
     particles_x_.resize(p_max_particles_);
     particles_y_.resize(p_max_particles_);
     particles_angle_.resize(p_max_particles_);
+
+    px_.resize(p_max_particles_);
+    py_.resize(p_max_particles_);
+    pangle_.resize(p_max_particles_);
 
     /* these topics are for visualization */
     pose_pub_      = node_.advertise<geometry_msgs::PoseStamped>("/pf/viz/inferred_pose", 1);
@@ -134,6 +133,8 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
             p_inv_squash_factor_);
         mclgpu_->set_sensor_table(sensor_model_table_, p_max_range_px_ + 1);
         mclgpu_->set_map(omap_, max_range_px);
+
+
 #ifdef TESTING
         /*
          * For testing only, set fake downsampled angles
@@ -151,6 +152,19 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
         MCL_cpu();
     }
 #endif
+    /*
+     * Initialize the GPU implementation of resampling
+     */
+    if (!p_which_res_.compare("gpu")){
+        resgpu_ = new ResamplingGPU(p_max_particles_, 3);
+    }
+    /*
+     * allocate space and initialize downsampled_ranges_ and downsampled_angles_
+     * If NUM_ANGLES is not the correct number, ros will shutdown when the first
+     * lidar message comes.
+     */
+    downsampled_ranges_.resize(NUM_ANGLES);
+    downsampled_angles_.resize(NUM_ANGLES);
 
     ROS_INFO("Finished initializing, waiting on messages ...");
 }
@@ -158,6 +172,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
 MCL::~MCL()
 {
     free(particles_);
+    free(sensor_model_table_);
     ROS_INFO("All done, bye yo!!");
 }
 
@@ -281,12 +296,6 @@ void MCL::precompute_sensor_model()
 #endif
 }
 
-/*
- * The following implementation is very slow, compared to the numpy version
- * (7.9 s vs. 0.005 s)
- *
- * TODO: try to use Eigen library
- */
 void MCL::initialize_global()
 {
     ROS_INFO("GLOBAL INITIALIZATION");
@@ -344,7 +353,14 @@ void MCL::initialize_acc()
     acc_error_y_ = 0.0f;
     acc_error_angle_ = 0.0f;
     acc_time_ms_ = 0.0f;
+    acc_focus_time_ms_ = 0.0f;
     iter_ = 0;
+    focus_iter_ = 0;
+
+    acc_res_ = 0.0f;
+    acc_update_ = 0.0f;
+    acc_total_ = 0.0f;
+    acc_expect_ = 0.0f;
 }
 
 void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
@@ -362,20 +378,22 @@ void MCL::lidarCB(const sensor_msgs::LaserScan& msg)
             ROS_ERROR("Need to reset NUM_ANGLES to %d in CMakeLists.txt", num_ranges_downsampled);
             ros::shutdown();
         }
-        downsampled_ranges_.resize(num_ranges_downsampled);
-        downsampled_angles_.resize(num_ranges_downsampled);
+        // downsampled_ranges_.resize(num_ranges_downsampled);
+        // downsampled_angles_.resize(num_ranges_downsampled);
         for (int i = 0; i < num_ranges_downsampled; i ++)
             downsampled_angles_[i] = amin + i * p_angle_step_ * inc;
         if (!p_which_impl_.compare("gpu") || !p_which_impl_.compare("hybrid"))
             mclgpu_->set_angles(downsampled_angles_.data());
     }
-    /* down sample the range */
-    range_mtx_.lock();
-    for (int i = 0; i < num_ranges; i += p_angle_step_)
-        downsampled_ranges_[i/p_angle_step_] = msg.ranges[i];
-    std::replace_if(downsampled_ranges_.begin(), downsampled_ranges_.end(),
-                    [](float range){return range > 10.0;}, 10.0);
-    range_mtx_.unlock();
+    {
+        /* down sample the range */
+        std::lock_guard<std::mutex> rangeLock(range_mtx_);
+        for (int i = 0; i < num_ranges; i += p_angle_step_)
+            downsampled_ranges_[i/p_angle_step_] = msg.ranges[i];
+        /* limit the max range to be 10.0 */
+        std::replace_if(downsampled_ranges_.begin(), downsampled_ranges_.end(),
+                        [](float range){return range > 10.0;}, 10.0);
+    }
     lidar_initialized_ = 1;
 }
 
@@ -425,28 +443,28 @@ void MCL::odomCB(const nav_msgs::Odometry& msg)
     pose[0] = msg.pose.pose.position.x;
     pose[1] = msg.pose.pose.position.y;
     pose[2] = omap_.quaternion_to_angle(msg.pose.pose.orientation);
-    odom_mtx_.lock();
-    if (odom_initialized_ >= 1)
     {
-        /*
-         * Compute the delta between two odometry in the car's frame,
-         * in which x axis is forward and y axis is left
-         */
-        float c = cos(-last_pose_[2]);
-        float s = sin(-last_pose_[2]);
-        float dx = pose[0] - last_pose_[0];
-        float dy = pose[1] - last_pose_[1];
-        odometry_delta_[0] = c*dx-s*dy;
-        odometry_delta_[1] = s*dx+c*dy;
-        odometry_delta_[2] = pose[2] - last_pose_[2];
-        odom_initialized_ = 2;
+        std::lock_guard<std::mutex> odomLock(odom_mtx_);
+        if (odom_initialized_ >= 1)
+        {
+            /*
+             * Compute the delta between two odometry in the car's frame,
+             * in which x axis is forward and y axis is left
+             */
+            float c = cos(-last_pose_[2]);
+            float s = sin(-last_pose_[2]);
+            float dx = pose[0] - last_pose_[0];
+            float dy = pose[1] - last_pose_[1];
+            odometry_delta_[0] = c*dx-s*dy;
+            odometry_delta_[1] = s*dx+c*dy;
+            odometry_delta_[2] = pose[2] - last_pose_[2];
+            odom_initialized_ = 2;
+        }
+        else
+            odom_initialized_ = 1;
+        last_pose_ = pose;
+        last_stamp_ = msg.header.stamp;
     }
-    else
-        odom_initialized_ = 1;
-    last_pose_ = pose;
-    last_stamp_ = msg.header.stamp;
-    odom_mtx_.unlock();
-
     /* this topic is slower than lidar, so update every time we receive a message */
     //update();
 }
@@ -497,7 +515,6 @@ void MCL::rand_initCB(const geometry_msgs::PointStamped& msg)
 {
     ROS_INFO("clicked point set");
     initialize_global();
-
 }
 
 void MCL::update()
@@ -505,14 +522,14 @@ void MCL::update()
     if (lidar_initialized_ && odom_initialized_ == 2 && map_initialized_)
     {
         pose_t old_pose;
-        odom_mtx_.lock();
-        old_pose[0] = last_pose_[0];
-        old_pose[1] = last_pose_[1];
-        old_pose[2] = last_pose_[2];
-        odom_mtx_.unlock();
+        {
+            std::lock_guard<std::mutex> odomLock(odom_mtx_);
+            old_pose = last_pose_;
+        }
         timer_.tick();
-        ros::Time t1 = ros::Time::now();
-        double maxW;
+        auto t0 = ros::Time::now();
+        //double maxW;
+        std::tuple<float, float, float> timing_results;
         /*
          * one step of MCL algorithm:
          *   1. resampling
@@ -521,42 +538,45 @@ void MCL::update()
          *   4. normalize particle weights
          */
         if (!p_which_impl_.compare("cpu"))
-            maxW = MCL_cpu();
+            timing_results  = MCL_cpu();
         else if (!p_which_impl_.compare("gpu"))
-            maxW = MCL_gpu();
+            timing_results = MCL_gpu();
         else if (!p_which_impl_.compare("adaptive"))
             MCL_adaptive();
         else if (!p_which_impl_.compare("hybrid"))
-            maxW = MCL_hybrid();
+            timing_results = MCL_hybrid();
         else
             ROS_ERROR("The chosen method is not implemented yet");
 
+        auto t1 = ros::Time::now();
         /* update inferred_pose_ */
         expected_pose();
 
-        ros::Time t2 = ros::Time::now();
+        auto t2 = ros::Time::now();
 
         /* publish transformation frame based on inferred pose */
         //publish_tf();
 
         /* seconds per iteration */
-        ros::Duration spi = t2 - t1;
+        // ros::Duration spi = t2 - t1;
+        auto MCL_t = (t2 - t0).toSec()*1000.0;
+        auto expect_t = (t2 - t1).toSec()*1000.0;
 
         /* accumulate duration */
-        acc_time_ms_ += spi.toSec()*1000.0;
+        acc_time_ms_ += MCL_t;
+        acc_expect_ += expect_t;
         /* record max weight of this iteration */
-        maxW_.append(maxW);
+        //maxW_.append(maxW);
         /*
          * obtain the current pose.
          * A mutex is used since the ros::spin() thread might be
          * calling odomCB to update last_pose_
          */
         pose_t new_pose;
-        odom_mtx_.lock();
-        new_pose[0] = last_pose_[0];
-        new_pose[1] = last_pose_[1];
-        new_pose[2] = last_pose_[2];
-        odom_mtx_.unlock();
+        {
+            std::lock_guard<std::mutex> odomLock(odom_mtx_);
+            new_pose = last_pose_;
+        }
         /*
          * calculate the weight of the inferred_pose_ according to
          * the new_pose using the sensor model.
@@ -577,16 +597,31 @@ void MCL::update()
         dis_.append(dis);
         iter_ ++;
 
+        if (dis > 1.0)
+            do_res_ = 0;
+        else {
+            do_res_ = 1;
+            focus_iter_ ++;
+            acc_focus_time_ms_ += MCL_t;
+            acc_res_  += std::get<0>(timing_results);
+        }
+        float ave_res;
+        if (focus_iter_)
+            ave_res = acc_res_ / focus_iter_;
+        else
+            ave_res = 0.0f;
+
+        acc_update_ += std::get<1>(timing_results);
+        acc_total_  += std::get<2>(timing_results);
         /* print info per 10 iterations */
         if (iter_ != 0 && iter_ %10 == 0){
-            printf("iter %4d time %7.4f ms interval %7.4f ms  maxW: %e  diffW: %e  dis: %7.4f\n",
-                   iter_, acc_time_ms_ / iter_, timer_.fps(),
-                   maxW_.mean(), diffW_.mean(), dis_.mean() );
-
-            if (dis > 1.0)
-                do_res_ = 0;
-            else
-                do_res_ = 1;
+            // printf("iter %4d time %7.4f ms interval %7.4f ms  maxW: %e  diffW: %e  dis: %7.4f\n",
+            //        iter_, elapsedTime, timer_.fps(),
+            //        maxW_.mean(), diffW_.mean(), dis_.mean() );
+            printf("iter %4d res: %7.4f update: %7.4f total: %7.4f "
+                   "|| expect: %7.4f MCL: %7.4f interval %7.4f  diffW: %e  dis: %7.4f\n",
+                   iter_, ave_res, acc_update_ / iter_, acc_total_ / iter_,
+                   acc_expect_ / iter_, acc_time_ms_ / iter_ , timer_.fps(), diffW_.mean(), dis_.mean() );
         }
     }
     visualize();
@@ -764,9 +799,6 @@ void MCL::publish_particles(fvec_t px, fvec_t py, fvec_t pangle, int num_particl
  */
 void MCL::select_particles(fvec_t &px, fvec_t &py, fvec_t &pangle, int num_particles)
 {
-    px.resize(num_particles);
-    py.resize(num_particles);
-    pangle.resize(num_particles);
     /*
      * https://stackoverflow.com/questions/42926209/equivalent-function-to-numpy-random-choice-in-c
      * Use weights_ to construct a distribution
@@ -787,21 +819,30 @@ void MCL::select_particles(fvec_t &px, fvec_t &py, fvec_t &pangle, int num_parti
      * Note that the lambda need to capture this to access member variables of MCL
      * check: https://riptutorial.com/cplusplus/example/2461/class-lambdas-and-capture-of-this
      */
-    std::transform(indices.begin(), indices.end(), px.begin(),
+    std::transform(indices.begin(), indices.end(), px_.begin(),
                    [this](int index) {return particles_x_[index];});
-    std::transform(indices.begin(), indices.end(), py.begin(),
+    std::transform(indices.begin(), indices.end(), py_.begin(),
                    [this](int index) {return particles_y_[index];});
-    std::transform(indices.begin(), indices.end(), pangle.begin(),
+    std::transform(indices.begin(), indices.end(), pangle_.begin(),
                    [this](int index) {return particles_angle_[index];});
 }
 
-double MCL::MCL_cpu()
+std::tuple<float, float, float> MCL::MCL_cpu()
 {
     /*************************************************
      * Step 1: Resampling using discrete_distribution
      *************************************************/
-    if (do_res_)
-        resampling();
+    auto t0 = ros::Time::now();
+    if (do_res_){
+        if (!p_which_res_.compare("cpu"))
+            resampling();
+        else if (!p_which_res_.compare("gpu"))
+            resampling_gpu();
+        else
+            ROS_ERROR("Unrecognized resampling implementation %s", p_which_res_.c_str());
+    }
+
+    auto t1 = ros::Time::now();
 
 #ifdef TESTING
     if (!init_pose_set_)
@@ -832,6 +873,8 @@ double MCL::MCL_cpu()
      ***************************************************/
     t_cpu_update(0, p_max_particles_, p_cpu_threads_);
 
+    auto t2 = ros::Time::now();
+
 #ifdef TESTING
     int maxPIdx = std::max_element(weights_.begin(), weights_.end()) - weights_.begin();
     pose_t ins;
@@ -845,30 +888,47 @@ double MCL::MCL_cpu()
     /*********************************************
      * Step 4: normalize the weights_  (but why?)
      *********************************************/
-    double maxW = normalize_weight();
-    return maxW;
+    // double maxW = normalize_weight();
+
+    auto res_t = (t1 - t0).toSec()*1000.0;
+    auto update_t = (t2 - t1).toSec()*1000.0;
+    auto total_t = (t2 - t0).toSec()*1000.0;
+    return std::make_tuple(res_t, update_t, total_t);
 }
 
-double MCL::MCL_gpu()
+std::tuple<float, float, float> MCL::MCL_gpu()
 {
     /***************************************************
      * step 1: Resampling
-     * using std::discrete_distribution
      ***************************************************/
-    if (do_res_)
-        resampling();
+    auto t0 = ros::Time::now();
+    if (do_res_){
+        if (!p_which_res_.compare("cpu"))
+            resampling();
+        else if (!p_which_res_.compare("gpu"))
+            resampling_gpu();
+        else
+            ROS_ERROR("Unrecognized resampling implementation %s", p_which_res_.c_str());
+    }
 
+    auto t1 = ros::Time::now();
     /********************************************************************************
      * step 2: apply motion model to advance the particles and compute their weights
      * All done on GPU
      ********************************************************************************/
     gpu_update(p_max_particles_);
 
+    auto t2 = ros::Time::now();
     /*********************************
      * Step 3: normalize the weights
      *********************************/
-    double maxW = normalize_weight();
-    return maxW;
+    // double maxW = normalize_weight();
+
+    auto res_t = (t1 - t0).toSec()*1000.0;
+    auto update_t = (t2 - t1).toSec()*1000.0;
+    auto total_t = (t2 - t0).toSec()*1000.0;
+
+    return std::make_tuple(res_t, update_t, total_t);
 }
 
 /*
@@ -905,6 +965,17 @@ void MCL::cpu_update(int start, int num_particles)
 {
     motion_model(start, num_particles);
     sensor_model(start, num_particles);
+#if 0
+    /*
+     * Testing if software thread launching works
+     */
+    if (iter_ && iter_ % 10 == 0) {
+        std::lock_guard<std::mutex> iolock(iomutex_);
+        std::cout<< "    thread " << pthread_self() << " on cpu "<< sched_getcpu();
+        printf("  motion: %7.4f  sensor: %7.4f cnt: %6.3f  ==> total update: %7.4f\n",
+               motion_t, sensor_t, cnt, (motion_t+sensor_t));
+    }
+#endif
 }
 
 /*
@@ -919,20 +990,51 @@ void MCL::t_cpu_update(int start, int num_particles, int num_threads)
     }
 
     /* Now num_threads is at least 2 */
-    int particles_per_thread = num_particles / num_threads;
-    int rem = num_particles - particles_per_thread * num_threads;
+    /* ppt: particles per thread */
+    int ppt = num_particles / num_threads;
+    /* plt: particles last thread */
+    int plt = num_particles - ppt * (num_threads - 1);
+    /*
+     * current_cpu: the cpu id on which the current thread is executing
+     * current_sibling: the other logical cpu id that shares the same physical
+     * core with current_cpu
+     */
+    int current_cpu = sched_getcpu();
+    int current_sibling = (current_cpu + PCORES) > LCORES ?
+        current_cpu - PCORES : current_cpu + PCORES;
 
     std::vector<std::thread> workers;
-    /* spawn num_threads std::threads to update */
-    for (int i = 0; i < num_threads; i ++){
-        auto t = std::thread(&MCL::cpu_update, this, start+i*particles_per_thread, particles_per_thread);
-        workers.push_back(std::move(t));
+    int cpuid = 0;
+    int passed_current = 0;
+    /* spawn num_threads - 1 std::threads to update */
+    for (int i = 0; i < num_threads - 1; i ++){
+        /*
+         * Using emplacement with std::thread constructor arguments saves us
+         * a copy operation here.
+         */
+        workers.emplace_back(&MCL::cpu_update, this, start+i*ppt, ppt);
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        /*
+         * Heuristic of setting cpuid for thread[i]:
+         * We only skip current_cpu or current sibling for the first round
+         */
+        if ((cpuid == current_cpu || cpuid == current_sibling) && !passed_current) {
+            cpuid ++;
+            passed_current = 1;
+        }
+        if (cpuid >= LCORES) cpuid = 0;
+        CPU_SET(cpuid, &cpuset);
+        cpuid ++;
+        int rc = pthread_setaffinity_np(workers[i].native_handle(),
+                                        sizeof(cpu_set_t), &cpuset);
+        if (rc != 0) {
+            std::cerr << "Error calling pthread_setaffinity_np: " << rc << "\n";
+        }
     }
 
-    /* main thread deals with the remaining particles if there is any */
-    if (rem != 0){
-        cpu_update(start + num_particles - rem, rem);
-    }
+    /* main thread deals with the last group */
+    cpu_update(start + num_particles - plt, plt);
 
     /* join all threads */
     std::for_each(workers.begin(), workers.end(), [](std::thread &t)
@@ -947,14 +1049,30 @@ int MCL::particle_partition()
     return p_N_gpu_;
 }
 
-double MCL::MCL_hybrid()
+void set_affinity(std::thread & t, int cpuid)
+{
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(cpuid, &cpuset);
+    int rc = pthread_setaffinity_np(t.native_handle(), sizeof(cpu_set_t), &cpuset);
+    if (rc != 0)
+        std::cerr << "Error calling pthread_setaffinity_np: " << rc << "\n";
+}
+
+std::tuple<float, float, float> MCL::MCL_hybrid()
 {
     /***************************************************
      * step 1: Resampling
-     * using std::discrete_distribution
      ***************************************************/
-    if (do_res_)
-        resampling();
+    auto t0 = ros::Time::now();
+    if (do_res_){
+        if (!p_which_res_.compare("cpu"))
+            resampling();
+        else if (!p_which_res_.compare("gpu"))
+            resampling_gpu();
+        else
+            ROS_ERROR("Unrecognized resampling implementation %s", p_which_res_.c_str());
+    }
 
     /********************************************************************************
      * step 2: apply motion model to advance the particles and compute their weights
@@ -963,24 +1081,41 @@ double MCL::MCL_hybrid()
     int N_gpu = particle_partition();
     int N_cpu = p_max_particles_ - N_gpu;
 
+    auto t1 = ros::Time::now();
     /*
      * This thread will propagate and evaluate the first N_gpu particles on GPU
+     * And we put this thread on the last physical core
      */
     std::thread t_test(&MCL::gpu_update, this, N_gpu);
 
+    set_affinity(t_test, PCORES-1);
+
+    auto t2 = ros::Time::now();
     /*
      * The main thread will propagate (motion_model()) and evaluate (sensor_model())
      * the particles on CPU
      */
-    t_cpu_update(N_gpu, N_cpu, p_cpu_threads_);
+    //t_cpu_update(N_gpu, N_cpu, p_cpu_threads_);
+    t_cpu_update(N_gpu, N_cpu, PCORES-1);
+    auto t3 = ros::Time::now();
 
     t_test.join();
+
+    auto t4 = ros::Time::now();
 
     /*********************************
      * Step 3: normalize the weights
      *********************************/
-    double maxW = normalize_weight();
-    return maxW;
+    //double maxW = normalize_weight();
+
+    auto res_t = (t1 - t0).toSec()*1000.0;
+    auto gpu_thread_t = (t2 - t1).toSec()*1000.0;
+    auto cpu_t = (t3 - t2).toSec()*1000.0;
+    auto total_cpu_gpu_t = (t4 - t1).toSec()*1000.0;
+    auto wait_t = (t4 - t3).toSec()*1000.0;
+    auto total_t = res_t + total_cpu_gpu_t;
+
+    return std::make_tuple(res_t, total_cpu_gpu_t, total_t);
 }
 
 double MCL::normalize_weight()
@@ -1002,11 +1137,10 @@ void MCL::MCL_adaptive(){}
 void MCL::motion_model(int start, int num_particles)
 {
     pose_t odelta;
-    odom_mtx_.lock();
-    odelta[0] = odometry_delta_[0];
-    odelta[1] = odometry_delta_[1];
-    odelta[2] = odometry_delta_[2];
-    odom_mtx_.unlock();
+    {
+        std::lock_guard<std::mutex> odomLock(odom_mtx_);
+        odelta = odometry_delta_;
+    }
     /* rotate the action into the coordinate space of each particle */
     fvec_t cosines(num_particles);
     fvec_t sines(num_particles);
@@ -1018,16 +1152,10 @@ void MCL::motion_model(int start, int num_particles)
 
     fvec_t local_deltas_x(num_particles);
     fvec_t local_deltas_y(num_particles);
-    std::transform(cosines.begin(), cosines.end(),
-                   sines.begin(),
-                   local_deltas_x.begin(),
-                   [odelta](float c, float s)
-                       {return c*odelta[0]-s*odelta[1];});
-    std::transform(cosines.begin(), cosines.end(),
-                   sines.begin(),
-                   local_deltas_y.begin(),
-                   [odelta](float c, float s)
-                       {return s*odelta[0]+c*odelta[1];});
+    std::transform(cosines.begin(), cosines.end(), sines.begin(), local_deltas_x.begin(),
+                   [odelta](float c, float s) {return c*odelta[0]-s*odelta[1];});
+    std::transform(cosines.begin(), cosines.end(), sines.begin(), local_deltas_y.begin(),
+                   [odelta](float c, float s) {return s*odelta[0]+c*odelta[1];});
     /* Add the local delta to each particle */
     unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::transform(particles_x_.begin()+start, particles_x_.begin()+end,
@@ -1042,7 +1170,8 @@ void MCL::motion_model(int start, int num_particles)
     seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::transform(particles_angle_.begin()+start, particles_angle_.begin()+end,
                    particles_angle_.begin()+start,
-                   std::bind(PlusWithNoise<float>(seed, p_motion_dispersion_theta_), std::placeholders::_1, odelta[2]) );
+                   std::bind(PlusWithNoise<float>(seed, p_motion_dispersion_theta_),
+                             std::placeholders::_1, odelta[2]) );
 }
 
 /*
@@ -1054,9 +1183,10 @@ void MCL::motion_model(int start, int num_particles)
 void MCL::sensor_model(int start, int num_particles)
 {
     fvec_t ranges(downsampled_ranges_.size());
-    range_mtx_.lock();
-    std::copy(downsampled_ranges_.begin(), downsampled_ranges_.end(), ranges.begin());
-    range_mtx_.unlock();
+    {
+        std::lock_guard<std::mutex> rangeLock(range_mtx_);
+        std::copy(downsampled_ranges_.begin(), downsampled_ranges_.end(), ranges.begin());
+    }
 
     if (!p_which_rm_.compare("rmgpu"))
     {
@@ -1093,14 +1223,17 @@ void MCL::sensor_model(int start, int num_particles)
 void MCL::resampling()
 {
     /* temp local vectors used by resampling */
-    fvec_t particles_x;
-    fvec_t particles_y;
-    fvec_t particles_angle;
-    select_particles(particles_x, particles_y, particles_angle, p_max_particles_);
+    select_particles(px_, py_, pangle_, p_max_particles_);
 
-    particles_x_ = std::move(particles_x);
-    particles_y_ = std::move(particles_y);
-    particles_angle_ = std::move(particles_angle);
+    particles_x_ = px_;
+    particles_y_ = py_;
+    particles_angle_ = pangle_;
+}
+
+void MCL::resampling_gpu()
+{
+    resgpu_->doSystematicRes(particles_x_.data(),particles_y_.data(),
+                             particles_angle_.data(), weights_.data());
 }
 
 void MCL::print_particles(int n)
