@@ -1116,7 +1116,7 @@ std::tuple<float, float, float> MCL::MCL_hybrid()
      */
     std::thread t_test(&MCL::gpu_update, this, N_gpu);
 
-    set_affinity(t_test, PCORES-1);
+    set_affinity(t_test, LCORES-1);
 
     auto t2 = ros::Time::now();
     /*
@@ -1124,7 +1124,7 @@ std::tuple<float, float, float> MCL::MCL_hybrid()
      * the particles on CPU
      */
     //t_cpu_update(N_gpu, N_cpu, p_cpu_threads_);
-    t_cpu_update(N_gpu, N_cpu, PCORES-1);
+    t_cpu_update(N_gpu, N_cpu, LCORES-1);
     auto t3 = ros::Time::now();
 
     t_test.join();
