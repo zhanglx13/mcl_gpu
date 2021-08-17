@@ -15,4 +15,3 @@ else
     jetson_clocks --restore
     echo 0 > /sys/devices/pwm-fan/target_pwm
 fi
-
