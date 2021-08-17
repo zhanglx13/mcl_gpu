@@ -3,7 +3,15 @@
 #include <numeric> // for transform_reduce
 #include <thread>
 
-
+void set_affinity(std::thread & t, int cpuid)
+{
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(cpuid, &cpuset);
+    int rc = pthread_setaffinity_np(t.native_handle(), sizeof(cpu_set_t), &cpuset);
+    if (rc != 0)
+        std::cerr << "Error calling pthread_setaffinity_np: " << rc << "\n";
+}
 
 MCL::MCL(ranges::OMap omap, float max_range_px):
     omap_(omap),
@@ -1000,8 +1008,44 @@ void MCL::t_cpu_update(int start, int num_particles, int num_threads)
      * core with current_cpu
      */
     int current_cpu = sched_getcpu();
-    int current_sibling = (current_cpu + PCORES) > LCORES ?
-        current_cpu - PCORES : current_cpu + PCORES;
+    /*
+      The processor architecture of Jetson TX2 is as follows
+       ┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+       │ Machine (7858MB)                                                                                       │
+       │                                                                                                        │
+       │ ┌────────────────────────────────────────────────────────────────┐  ┌────────────────────────────────┐ │
+       │ │ Package P#1                                                    │  │ Package P#0                    │ │
+       │ │                                                                │  │                                │ │
+       │ │ ┌────────────────────────────────────────────────────────────┐ │  │ ┌────────────────────────────┐ │ │
+       │ │ │ L2 (2048KB)                                                │ │  │ │ L2 (0KB)                   │ │ │
+       │ │ └────────────────────────────────────────────────────────────┘ │  │ └────────────────────────────┘ │ │
+       │ │                                                                │  │                                │ │
+       │ │ ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐ │  │ ┌────────────┐  ┌────────────┐ │ │
+       │ │ │ L1d (32KB) │  │ L1d (32KB) │  │ L1d (32KB) │  │ L1d (32KB) │ │  │ │ L1d (0KB)  │  │ L1d (0KB)  │ │ │
+       │ │ └────────────┘  └────────────┘  └────────────┘  └────────────┘ │  │ └────────────┘  └────────────┘ │ │
+       │ │                                                                │  │                                │ │
+       │ │ ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐ │  │ ┌────────────┐  ┌────────────┐ │ │
+       │ │ │ L1i (48KB) │  │ L1i (48KB) │  │ L1i (48KB) │  │ L1i (48KB) │ │  │ │ L1i (0KB)  │  │ L1i (0KB)  │ │ │
+       │ │ └────────────┘  └────────────┘  └────────────┘  └────────────┘ │  │ └────────────┘  └────────────┘ │ │
+       │ │                                                                │  │                                │ │
+       │ │ ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐ │  │ ┌────────────┐  ┌────────────┐ │ │
+       │ │ │ Core P#0   │  │ Core P#1   │  │ Core P#2   │  │ Core P#3   │ │  │ │ Core P#0   │  │ Core P#1   │ │ │
+       │ │ │            │  │            │  │            │  │            │ │  │ │            │  │            │ │ │
+       │ │ │ ┌────────┐ │  │ ┌────────┐ │  │ ┌────────┐ │  │ ┌────────┐ │ │  │ │ ┌────────┐ │  │ ┌────────┐ │ │ │
+       │ │ │ │ PU P#0 │ │  │ │ PU P#3 │ │  │ │ PU P#4 │ │  │ │ PU P#5 │ │ │  │ │ │ PU P#1 │ │  │ │ PU P#2 │ │ │ │
+       │ │ │ └────────┘ │  │ └────────┘ │  │ └────────┘ │  │ └────────┘ │ │  │ │ └────────┘ │  │ └────────┘ │ │ │
+       │ │ └────────────┘  └────────────┘  └────────────┘  └────────────┘ │  │ └────────────┘  └────────────┘ │ │
+       │ └────────────────────────────────────────────────────────────────┘  └────────────────────────────────┘ │
+       └────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+       Package P#1 is the A57 core and Package P#0 is the Denver core.
+       It is said that CPU0 is used to access hardware (such as GPIO) and the
+       Denver core is more powerful than the A57.
+       (https://forums.developer.nvidia.com/t/tx2-allocate-different-threads-on-different-cpus-possible/59315/6)
+       Therefore, we will put the current (main) thread on CPU0. And use one of
+       the A57 cores to launch the GPU kernel.
+
+       Note that PCORE always return 1 and LCORES returns 6 for the Jetson TX2 system.
+    */
 
     std::vector<std::thread> workers;
     int cpuid = 0;
@@ -1013,24 +1057,18 @@ void MCL::t_cpu_update(int start, int num_particles, int num_threads)
          * a copy operation here.
          */
         workers.emplace_back(&MCL::cpu_update, this, start+i*ppt, ppt);
-        cpu_set_t cpuset;
-        CPU_ZERO(&cpuset);
         /*
          * Heuristic of setting cpuid for thread[i]:
          * We only skip current_cpu or current sibling for the first round
          */
-        if ((cpuid == current_cpu || cpuid == current_sibling) && !passed_current) {
+        if ( ( cpuid == current_cpu ) && !passed_current ) {
             cpuid ++;
             passed_current = 1;
         }
         if (cpuid >= LCORES) cpuid = 0;
-        CPU_SET(cpuid, &cpuset);
+
+        set_affinity(workers[i], cpuid);
         cpuid ++;
-        int rc = pthread_setaffinity_np(workers[i].native_handle(),
-                                        sizeof(cpu_set_t), &cpuset);
-        if (rc != 0) {
-            std::cerr << "Error calling pthread_setaffinity_np: " << rc << "\n";
-        }
     }
 
     /* main thread deals with the last group */
@@ -1047,16 +1085,6 @@ void MCL::t_cpu_update(int start, int num_particles, int num_threads)
 int MCL::particle_partition()
 {
     return p_N_gpu_;
-}
-
-void set_affinity(std::thread & t, int cpuid)
-{
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(cpuid, &cpuset);
-    int rc = pthread_setaffinity_np(t.native_handle(), sizeof(cpu_set_t), &cpuset);
-    if (rc != 0)
-        std::cerr << "Error calling pthread_setaffinity_np: " << rc << "\n";
 }
 
 std::tuple<float, float, float> MCL::MCL_hybrid()
