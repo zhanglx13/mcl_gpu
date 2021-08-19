@@ -1,11 +1,29 @@
 #! /usr/bin/env bash
 
-result_dir=GPU
+result_dir=$1
 
-echo "n        res     update   total     expect  MCL" > gpu_timing.txt
+## Convert result_dir to lower case. Require bash 4.0
+filename=$(echo "${result_dir,,}")
 
-for n in `seq 256 256 768; seq 1024 1024 10240; seq 16384 4096 122880`
-#for n in `seq 20 20 200; seq 256 256 3072`
+echo "Processing results in ${result_dir} and writing to ${filename}_timing.txt"
+
+echo "n        res     update   total     expect  MCL" > ${filename}_timing.txt
+
+
+if [[ "${result_dir}" == "GPU" ]]; then
+    n_range=`seq 256 256 768; seq 1024 1024 10240; seq 16384 4096 122880`
+elif [[ "${result_dir}" == "GPU_jetson" ]]; then
+    n_range=`seq 256 256 768; seq 1024 1024 10240; seq 16384 4096 40960`
+elif [[ "${result_dir}" == "CPU_MT7" ]]; then
+    n_range=`seq 20 20 200; seq 256 256 3072`
+elif [[ "${result_dir}" == "CPU_jetson_MT5" ]]; then
+    n_range=`seq 20 20 200; seq 256 256 2560`
+else
+    echo "${result_dir} not recognized"
+    exit
+fi
+
+for n in ${n_range}
 do
     echo "n is $n"
     cnt=0
@@ -28,8 +46,6 @@ do
             acc_total=$(echo "$acc_total + ${lastL_arr[2]}" | bc -l)
             acc_expect=$(echo "$acc_expect + ${lastL_arr[3]}" | bc -l)
             acc_MCL=$(echo "$acc_MCL + ${lastL_arr[4]}" | bc -l)
-        #else
-        #    echo "$result ---> $lastL  NO"
         fi
     done
     res=$(echo "$acc_res / $cnt" | bc -l)
@@ -37,5 +53,5 @@ do
     total=$(echo "$acc_total / $cnt" | bc -l)
     expect=$(echo "$acc_expect / $cnt" | bc -l)
     MCL=$(echo "$acc_MCL / $cnt" | bc -l)
-    printf "%6d  %7.4f  %7.4f  %7.4f  %7.4f %7.4f\n" $n  $res  $update  $total  $expect  $MCL >> gpu_timing.txt
+    printf "%6d  %7.4f  %7.4f  %7.4f  %7.4f %7.4f\n" $n  $res  $update  $total  $expect  $MCL >> ${filename}_timing.txt
 done

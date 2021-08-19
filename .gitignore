@@ -1,4 +1,11 @@
-src/*.o
+src/*
+rviz/*
+package.xml
+maps/*
+launch/*
+include/*
+CMakeLists.txt
+bags/*
 script/CPU
 script/CPU_*
 script/GPU
@@ -9,3 +16,4 @@ script/table
 script/table_*
 script/test*
 script/*.txt
+script/hybrid_*
