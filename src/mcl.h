@@ -2,7 +2,10 @@
 #define MCL_H_
 
 #include <mutex>
+#include <condition_variable>
+#include <thread>
 #include <tuple>
+#include <unordered_map>
 #include "ros/ros.h"
 
 #include "sensor_msgs/LaserScan.h"
@@ -42,6 +45,8 @@ private:
     void initialize_global();
     void initialize_initpose(int startover);
     void initialize_acc();
+    void initialize_mt();
+    void initialize_workers(int num_threads);
     void do_acc(float time_in_ms);
     double calc_diff(pose_t);
     float calc_dis(pose_t);
@@ -51,7 +56,7 @@ private:
     std::tuple<float, float, float> MCL_gpu();
     std::tuple<float, float, float> MCL_hybrid();
     void gpu_update(int N_gpu);
-    void cpu_update(int start, int num_particles);
+    void cpu_update();
     void t_cpu_update(int start, int num_particles, int num_threads);
     void MCL_adaptive();
     int particle_partition();
@@ -195,26 +200,80 @@ private:
     std::mutex odom_mtx_;
     std::mutex range_mtx_;
 
+    /*
+     * @note
+     *
+     * Multi-threaded synchronization using condition variable
+     *
+     * cpu_workers_ is an array of thread handles. We allocate PCORES threads
+     * since it is expected to yield the best performance. Note that when GPU
+     * implementation is involved, only PCORES-1 threads are used to implement
+     * the CPU version of MCL, since one thread is dedicated to launch the GPU
+     * kernels.
+     *
+     * cv_ is a condition variable and ready_ is a flag.
+     * They are used to synchronize between the main thread
+     * and the worker threads. Here is how we are going to use it:
+     *   1. In MCL_cpu() or MCL_hybrid(), the main thread set item_ to be the
+     *      number of workers and ready_ to be 1. And it signal_all() on cv_.
+     *      Therefore, all worker threads can start update the particles.
+     *   2. After the main thread finishes its portion, it waits on item_
+     *      to be 0. If item_ is not 0, it wait() on cv_, expecting the last
+     *      worker to signal it.
+     *   3. When a worker thread starts, it checks ready_ to see if ready_ is
+     *      set to one. If not, it wait() on cv_, expecting the main thread
+     *      will signal it.
+     *   4. When a worker thread finishes, it decrement item_ and checks if
+     *      item_ is 0. If so, it signal() on cv_ and wakes up the main thread.
+     * Details can be found in the comment before cpu_update() function.
+     *
+     * Some notes
+     * - Worker threads are guaranteed to start after the main thread has set
+     *   ready_ and item_ and signal_all()
+     * - Only the last thread will signal() the main thread. It is possible that
+     *   it also wakes up other threads (since other threads have finished and
+     *   started to wait on ready_ to be larger than 0 again for the next iteration).
+     *   However, at this point, ready_ is 0, so only the main thread will wake up
+     *   and continue its work. Other worker threads will wake up and go back to
+     *   sleep immediately.
+     * - It is also possible that the main thread has not finished its portion
+     *   before the last worker thread sends the signal. In this case, the signal
+     *   is lost. Fortunately, item_ is set to 0 and main thread will not need
+     *   to wait() on cv_. Therefore, it can continue its work directly.
+     *
+     * ready_mtx_ is used to protect concurrent access to ready_ and item_ from
+     * all threads.
+     *
+     * worker_start_map_ and worker_n_map_ are used to represent the working set for
+     * each thread, i.e. the start index and the total number of particles.
+     */
+    std::vector<std::thread> cpu_workers_;
+    std::condition_variable cv_;
+    int ready_ {0};
+    int item_ {0};
+    std::mutex cv_mtx_;
+    std::unordered_map<pthread_t, int> worker_start_map_;
+    std::unordered_map<pthread_t, int> worker_n_map_;
+
     /* flag to control whether to perform resampling */
     int do_res_{0};
 
     /* info of each iteration of the MCL algorithm */
-    int iter_;
-    int focus_iter_;
+    int iter_ {0};
+    int focus_iter_ {0};
     Utils::Timer timer_;
     Utils::CircularArray<double> maxW_;
     Utils::CircularArray<double> diffW_;
     Utils::CircularArray<double> dis_;
-    float acc_error_x_;
-    float acc_error_y_;
-    float acc_error_angle_;
-    float acc_time_ms_;
-    float acc_focus_time_ms_;
-
-    float acc_res_;
-    float acc_update_;
-    float acc_total_;
-    float acc_expect_;
+    float acc_error_x_ {0};
+    float acc_error_y_ {0};
+    float acc_error_angle_ {0};
+    float acc_time_ms_ {0};
+    float acc_focus_time_ms_ {0};
+    float acc_res_ {0};
+    float acc_update_ {0};
+    float acc_total_ {0};
+    float acc_expect_ {0};
 };
 
 template <class T>
