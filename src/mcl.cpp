@@ -1,6 +1,7 @@
 #include "mcl.h"
 #define _USE_MATH_DEFINES // for pi ==> M_PI
 #include <numeric> // for transform_reduce
+#include <sched.h>
 
 void set_affinity(std::thread &t, int cpuid)
 {
@@ -170,15 +171,31 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
  *      Note that we set the affinity of the worker threads before they start doing
  *      meaningful work. They should be sleeping right now, waiting on the cv_.
  */
-void MCL::initialize_workers(int num_threads)
+void MCL::initialize_cpu_workers(int num_threads)
 {
     for (int i = 0; i < num_threads; i ++){
         cpu_workers_.emplace_back(&MCL::cpu_update, this);
-        worker_start_map_[cpu_workers_[i].native_handle()] = 0;
-        worker_n_map_[cpu_workers_[i].native_handle()] = 0;
+        cpu_worker_start_map_[cpu_workers_[i].native_handle()] = 0;
+        cpu_worker_n_map_[cpu_workers_[i].native_handle()] = 0;
         set_affinity(cpu_workers_[i], i+1);
         //ROS_DEBUG_STREAM("Thread "<<cpu_workers_[i].native_handle() << " running on CPU "<<i+1);
     }
+}
+
+/*
+ * Create the gpu worker thread
+ *
+ * - Only one thread is needed and the thread is running MCL::gpu_update.
+ * - num_particles_gpu_ is used to communicate the number of particles assigned
+ *   to GPU from the main thread to the worker thread.
+ * - The gpu worker thread is assigned to the last CPU
+ */
+void MCL::initialize_gpu_worker()
+{
+    gpu_worker_ = std::thread(&MCL::gpu_update, this);
+    num_particles_gpu_ = (int*)malloc(sizeof(int));
+    *num_particles_gpu_ = 0;
+    set_affinity(gpu_worker_, PCORES-1);
 }
 
 void MCL::initialize_mt()
@@ -240,7 +257,7 @@ void MCL::initialize_mt()
          *
          * It is asserted that p_cpu_threads_ <= PCORES
          */
-        initialize_workers(p_cpu_threads_ - 1);
+        initialize_cpu_workers(p_cpu_threads_ - 1);
     } else {
         /*
          * For hybrid implementation, create PCORES - 2 threads
@@ -249,7 +266,8 @@ void MCL::initialize_mt()
          * The last core is used to hold another thread, which is used to launch
          * the GPU implementation.
          */
-        initialize_workers(PCORES - 2);
+        initialize_cpu_workers(PCORES - 2);
+        initialize_gpu_worker();
     }
 }
 
@@ -262,8 +280,14 @@ MCL::~MCL()
     for (int i = 0; i < cpu_workers_.size(); i++){
         auto t = cpu_workers_[i].native_handle();
         assert(cpu_workers_[i].joinable());
-        std::cout<<"Joining thread " << t<<"\n";
+        std::cout<<"Joining cpu thread " << t<<"\n";
         cpu_workers_[i].join();
+    }
+    /* join gpu worker for hybrid implementation */
+    if (!p_which_impl_.compare("hybrid")){
+        assert(gpu_worker_.joinable());
+        std::cout<<"Joining gpu thread " << gpu_worker_.native_handle() << "\n";
+        gpu_worker_.join();
     }
     std::cout<< "All done, bye yo!!" << "\n";
 }
@@ -974,7 +998,13 @@ std::tuple<float, float, float> MCL::MCL_gpu()
      * step 2: apply motion model to advance the particles and compute their weights
      * All done on GPU
      ********************************************************************************/
-    gpu_update(p_max_particles_);
+    mclgpu_->update(
+        /* particles */
+        particles_x_.data(), particles_y_.data(), particles_angle_.data(),
+        /* action, i.e. odometry_delta_ */
+        odometry_delta_.data(), downsampled_ranges_.data(), (int)downsampled_ranges_.size(),
+        /* output */
+        weights_.data(), p_max_particles_);
 
     auto t2 = ros::Time::now();
     /*********************************
@@ -991,24 +1021,65 @@ std::tuple<float, float, float> MCL::MCL_gpu()
 
 /*
  * Perform motion model and sensor model on GPU
- * This function updates and evaluates the first N_gpu particles in the population
+ * This function is bounded to the gpu thread and it updates and evaluates the
+ * first *num_particles_gpu_ particles in the population
+ *
+ * @note
+ * How does the worker thread sync with the main thread?
+ *
+ * Since there is only one worker thread executing this function, the sync mechanism
+ * is much simpler compared to MCL::cpu_update().
+ * - The main thread sets ready_gpu_ to 1 when it has figured out the number of
+ *   particles for GPU and notify the gpu thread.
+ * - The worker thread waits for the ready_gpu_ to be set and starts to work.
+ * - When the worker thread finishes, it sets ready_gpu_ to 0 and waits again for
+ *   it to be set to 1 by the main thread.
+ * - After the main thread has notified the worker thread, it continues to do
+ *   update on CPU. After CPU work is done, it waits for the ready_gpu_ to be 0.
+ *   It either is waken up by the worker thread when gpu work is done, or does not
+ *   sleep at all since the gpu thread has already reset ready_gpu_.
+ * - The worker thread terminates only when ros has been shutdown.
  */
-void MCL::gpu_update(int N_gpu)
+void MCL::gpu_update()
 {
-    /*
-     * Note the difference between mclgpu->update() called in MCL_gpu() is the number of
-     * particles used. Here we only launch N_gpu particles on GPU
-     */
-    mclgpu_->update(
-        /* inputs */
-        /* particles */
-        particles_x_.data(), particles_y_.data(), particles_angle_.data(),
-        /* action, i.e. odometry_delta_ */
-        odometry_delta_.data(), downsampled_ranges_.data(), (int)downsampled_ranges_.size(),
-        /* output */
-        weights_.data(),
-        /* number of particles */
-        N_gpu);
+    while(1){
+        /* First check if main thread has set the parameters */
+        {
+            // std::cout<< iter_ <<  ": GPU thread is waiting for cv ready_gpu_ = " << ready_gpu_ << "\n";
+            std::unique_lock<std::mutex> workerLk (cv_gpu_mtx_);
+            cv_gpu_.wait(workerLk, [this]{return ready_gpu_ == 1 || !ros::ok();});
+            // std::cout<< iter_ <<  ": GPU thread is ready to go  ready_gpu_ = " << ready_gpu_ << "\n";
+        }
+        if (!ros::ok()) {
+            // std::cout<< iter_ << ": GPU thread wakes up because ROS is shutdown\n";
+            /*
+             * We need to notify the main thread for the same reason as we did
+             * in cpu_update()
+             */
+            cv_gpu_.notify_all();
+            break;
+        }
+
+        /* update the first *num_particles_gpu particles on GPU */
+        mclgpu_->update(
+            /* inputs */
+            /* particles */
+            particles_x_.data(), particles_y_.data(), particles_angle_.data(),
+            /* action, i.e. odometry_delta_ */
+            odometry_delta_.data(), downsampled_ranges_.data(), (int)downsampled_ranges_.size(),
+            /* output */
+            weights_.data(),
+            /* number of particles */
+            *num_particles_gpu_);
+
+        /* After work is done, reset ready_gpu_ to 0 and notify the main thread */
+        {
+            std::lock_guard<std::mutex> workerLk (cv_gpu_mtx_);
+            ready_gpu_ = 0;
+            // std::cout << iter_ << ": GPU thread finished  ready_gpu_ = " << ready_gpu_ << "\n";
+        }
+        cv_gpu_.notify_all();
+    }
 }
 
 /*
@@ -1021,18 +1092,18 @@ void MCL::gpu_update(int N_gpu)
  *    The worker thread waits for the main thread to prepare data and wakes up
  *    when the following condition satisfy:
  *
- *    1) ready_ == 1 && iter_old != iter_
+ *    1) ready_cpu_ == 1 && iter_old != iter_
  *    Or
  *    2) ros::ok() return false
  *
- *    ready_ == 1 means that the main thread has set up the start and num_particles
- *    parameters for each worker so that the worker should be able to start to work
- *    However, it is possible that worker A has finished the current loop and comes
- *    back again at the cv_mait(). Now we do not want worker A to do the work again
- *    (although it is not wrong to let it do it again, we do want to save some CPU
- *    time), so we use iter_old to keep track of the global iteration information,
- *    which is saved in iter_. The worker should not do the work for the same iter_
- *    value.
+ *    ready_cpu == 1 means that the main thread has set up the start and
+ *    num_particles parameters for each worker so that the worker should be able
+ *    to start to work.However, it is possible that worker A has finished the
+ *    current loop and comes back again at the cv_cpu_.wait(). Now we do not want
+ *    worker A to do the work again (although it is not wrong to let it do it again,
+ *    we do want to save some CPU time), so we use iter_old to keep track of the
+ *    global iteration information, which is saved in iter_. The worker should
+ *    not do the work for the same iter_ value.
  *
  *    We also do not want the worker the wait if ros is not ok, i.e. ros::shutdown()
  *    is called. This happens when roslaunch sends SIGINT to mcl_gpu, and the default
@@ -1041,11 +1112,11 @@ void MCL::gpu_update(int N_gpu)
  *    of MCL does not need to cancel the worker threads before joining them.
  *
  *    item_ is used to figure out who is the last thread to finish. The last thread
- *    is responsible to notify the main thread and set ready_ back to 0. This is
+ *    is responsible to notify the main thread and set ready_cpu_ back to 0. This is
  *    safe since all other worker threads should finished their work and they do
- *    expect ready_ to be 0. This is also necessary since we do not want the worker
+ *    expect ready_cpu_ to be 0. This is also necessary since we do not want the worker
  *    threads to start the work on the next iter_ value before the main thread set
- *    start, n, and item_. Without setting ready_ back to 0, the worker threads
+ *    start, n, and item_. Without setting ready_cpu_ back to 0, the worker threads
  *    will start as soon as iter_ is updated (note that threads can have spurious
  *    wake up and we need to make sure the condition is false even when no one has
  *    notified them).
@@ -1056,26 +1127,41 @@ void MCL::cpu_update()
     /* The worker thread never terminates unless ros::ok() == false */
     while(1){
         {
+            // std::cout<< "@@@iter "<< iter_ << ": cpu thread "<< pthread_self();
+            // std::cout<< " waiting for cv\n";
+            std::unique_lock<std::mutex> workerLk (cv_cpu_mtx_);
+            cv_cpu_.wait(workerLk, [this, iter_old]{
+                return (ready_cpu_ == 1 && iter_ != iter_old) || !ros::ok();});
             // std::cout<< "@@@iter "<< iter_ << ": thread "<< pthread_self();
-            // std::cout<< "waiting for cv\n";
-            std::unique_lock<std::mutex> workerLk (cv_mtx_);
-            cv_.wait(workerLk, [this, iter_old]{return (ready_ == 1 && iter_ != iter_old) || !ros::ok();});
+            // std::cout<< " has started ==> ready_cpu_ = " << ready_cpu_ <<" item_ = " << item_;
+            // std::cout<< " on cpu " << sched_getcpu();
             // if (!ros::ok()){
-            //     std::cout<< "@@@iter "<< iter_ << ": thread "<< pthread_self();
-            //     std::cout<< " ros not OK!!! I am going to terminate!\n";
+            //     std::cout<< " ==> ros not OK!!! I am going to terminate!\n";
             // }
-            // std::cout<< "@@@iter "<< iter_ << ": thread "<< pthread_self();
-            // std::cout<< " has started ==> ready_ = " << ready_ <<" item_ = " << item_;
-            // std::cout<< "on cpu " << sched_getcpu() <<"\n";
+            // else
+            //     std::cout<<"\n";
             // fflush(stdout);
         }
         if (!ros::ok()){
+            /*
+             * @note
+             *
+             * Why we need to notify here?
+             *
+             * It is possible that the main thread is waiting on cv_cpu_ right
+             * now, i.e. the main thread went to sleep before ros has been shutdown.
+             * Therefore, this thread needs to notify the main thread before
+             * terminating.
+             * The main thread will wake up and find out ros::ok() returns false.
+             * And the main thread can also terminate.
+             */
+            cv_cpu_.notify_all();
             break;
         }
         /* get my start and num_particles from the map using my pthread id */
         pthread_t myTid = pthread_self();
-        int start = worker_start_map_[myTid];
-        int num_particles = worker_n_map_[myTid];
+        int start = cpu_worker_start_map_[myTid];
+        int num_particles = cpu_worker_n_map_[myTid];
         motion_model(start, num_particles);
         sensor_model(start, num_particles);
 
@@ -1085,20 +1171,20 @@ void MCL::cpu_update()
          */
         int isLast = 0;
         {
-            std::lock_guard<std::mutex> workerLk (cv_mtx_);
+            std::lock_guard<std::mutex> workerLk (cv_cpu_mtx_);
             item_ --;
             // std::cout<< "@@@iter "<< iter_ << ": thread "<< pthread_self();
-            // std::cout<< " has finished ready_ = " << ready_ << " item = "<< item_;
+            // std::cout<< " has finished ready_ = " << ready_cpu_ << " item = "<< item_;
             if (item_ == 0){
                 isLast = 1;
-                ready_ = 0;
+                ready_cpu_ = 0;
             }
             // std::cout<< "\n";
             // fflush(stdout);
         }
         iter_old = iter_;
         if (isLast)
-            cv_.notify_all();
+            cv_cpu_.notify_all();
     }
 }
 
@@ -1124,25 +1210,37 @@ void MCL::t_cpu_update(int start, int num_particles, int num_threads)
      * and signal them to start working
      */
     for (int i = 0 ; i < cpu_workers_.size(); i ++){
-        worker_start_map_[cpu_workers_[i].native_handle()] = start + i*ppt;
-        worker_n_map_[cpu_workers_[i].native_handle()] = ppt;
+        cpu_worker_start_map_[cpu_workers_[i].native_handle()] = start + i*ppt;
+        cpu_worker_n_map_[cpu_workers_[i].native_handle()] = ppt;
     }
     {
-        std::lock_guard<std::mutex> mainLk (cv_mtx_);
+        std::lock_guard<std::mutex> mainLk (cv_cpu_mtx_);
         item_ = cpu_workers_.size();
-        ready_ = 1;
-        // printf("@@@iter %d: Main thread set ready_ = %d  item_ = %d\n", iter_, ready_, item_);
+        ready_cpu_ = 1;
+        // printf("@@@iter %d: Main thread set ready_ = %d  item_ = %d\n", iter_, ready_cpu_, item_);
         // fflush(stdout);
     }
-    cv_.notify_all();
+    cv_cpu_.notify_all();
 
     /* main thread deals with the last group */
     motion_model(start + num_particles - plt, plt);
     sensor_model(start + num_particles - plt, plt);
 
     {
-        std::unique_lock<std::mutex> mainLk (cv_mtx_);
-        cv_.wait(mainLk, [this] { return item_ == 0;});
+        std::unique_lock<std::mutex> mainLk (cv_cpu_mtx_);
+        /*
+         * We need to check ros::ok() since it is possible that ros is shutdown
+         * after the main thread goes to sleep.
+         * - If one of the worker thread finds out ros has been shutdown, it will
+         *   notify the main thread. Then the main thread will find out that ros
+         *   has been shutdown.
+         * - If no worker thread finds out that ros has been shutdown, it means
+         *   item_ is set to 0. Either the main thread does not go to sleep at all
+         *   or the last worker thread notifies the main thread so that it finds
+         *   out item_ is 0. Either way, the main thread can terminate.
+         */
+        cv_cpu_.wait(mainLk, [this] { return item_ == 0 || !ros::ok();});
+        // std::cout << iter_ <<": Main thread sync with cpu threads ready_cpu_ = "<< ready_gpu_ << "\n";
         // std::cout << "@@@iter " << iter_ << ": main thread synced with all workers\n";
         // fflush(stdout);
     }
@@ -1167,45 +1265,57 @@ std::tuple<float, float, float> MCL::MCL_hybrid()
         else
             ROS_ERROR("Unrecognized resampling implementation %s", p_which_res_.c_str());
     }
-
+    auto t1 = ros::Time::now();
     /********************************************************************************
      * step 2: apply motion model to advance the particles and compute their weights
      * Distribute particles among CPU and GPU
      ********************************************************************************/
-    int N_gpu = particle_partition();
-    int N_cpu = p_max_particles_ - N_gpu;
-
-    auto t1 = ros::Time::now();
     /*
-     * This thread will propagate and evaluate the first N_gpu particles on GPU
-     * And we put this thread on the last physical core
+     * Set up number of particles for GPU and set ready_gpu_ to 1
+     * Then notify the gpu thread
      */
-    std::thread t_test(&MCL::gpu_update, this, N_gpu);
+    {
+        std::lock_guard<std::mutex> mainLk (cv_gpu_mtx_);
+        *num_particles_gpu_ = particle_partition();
+        ready_gpu_ = 1;
+        // std::cout << "Main thread is starting!!!\n";
+    }
+    cv_gpu_.notify_all();
 
-    set_affinity(t_test, PCORES-1);
-
-    auto t2 = ros::Time::now();
     /*
      * The main thread will propagate (motion_model()) and evaluate (sensor_model())
      * the particles on CPU
+     * When t_cpu_update() returns, the work on CPU is done
      */
-    t_cpu_update(N_gpu, N_cpu, PCORES-1);
-    auto t3 = ros::Time::now();
+    int N_cpu = p_max_particles_ - *num_particles_gpu_;
+    t_cpu_update(*num_particles_gpu_, N_cpu, PCORES-1);
 
-    t_test.join();
+    /*
+     * Sync with the gpu thread
+     * Main thread waits for the ready_gpu_ to be set to 0
+     */
+    {
+        std::unique_lock<std::mutex> mainLk (cv_gpu_mtx_);
+        /*
+         * @note
+         *
+         * Why we need to check ros::ok() here?
+         *
+         * - When SIGINT is received before this point, the main thread will not
+         *   sleep on the cv_gpu_ since ros::ok() returns false. Therefore, the
+         *   main thread can terminate.
+         * - When the SIGINT is received while the main thread is waiting on
+         *   cv_gpu_, the gpu thread will set ready_gpu_ to 0 and notify the main
+         *   thread. Therefore, the main thread can terminate.
+         */
+        cv_gpu_.wait(mainLk, [this]{return ready_gpu_ == 0 || !ros::ok();});
+        // std::cout << iter_ <<": Main thread sync with gpu thread ready_gpu_ = "<< ready_gpu_ << "\n";
+    }
+    auto t2 = ros::Time::now();
 
-    auto t4 = ros::Time::now();
-
-    /*********************************
-     * Step 3: normalize the weights
-     *********************************/
-    //double maxW = normalize_weight();
 
     auto res_t = (t1 - t0).toSec()*1000.0;
-    auto gpu_thread_t = (t2 - t1).toSec()*1000.0;
-    auto cpu_t = (t3 - t2).toSec()*1000.0;
-    auto total_cpu_gpu_t = (t4 - t1).toSec()*1000.0;
-    auto wait_t = (t4 - t3).toSec()*1000.0;
+    auto total_cpu_gpu_t = (t2 - t1).toSec()*1000.0;
     auto total_t = res_t + total_cpu_gpu_t;
 
     return std::make_tuple(res_t, total_cpu_gpu_t, total_t);
@@ -1327,6 +1437,12 @@ void MCL::resampling_gpu()
 {
     resgpu_->doSystematicRes(particles_x_.data(),particles_y_.data(),
                              particles_angle_.data(), weights_.data());
+}
+
+void MCL::cleanup()
+{
+    cv_cpu_.notify_all();
+    cv_gpu_.notify_all();
 }
 
 void MCL::print_particles(int n)

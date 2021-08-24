@@ -32,6 +32,7 @@ public:
 
     /* This is the only interface that is public to client */
     void update();
+    void cleanup();
 
 private:
     /* callback functions */
@@ -46,7 +47,8 @@ private:
     void initialize_initpose(int startover);
     void initialize_acc();
     void initialize_mt();
-    void initialize_workers(int num_threads);
+    void initialize_cpu_workers(int num_threads);
+    void initialize_gpu_worker();
     void do_acc(float time_in_ms);
     double calc_diff(pose_t);
     float calc_dis(pose_t);
@@ -55,7 +57,7 @@ private:
     std::tuple<float, float, float> MCL_cpu();
     std::tuple<float, float, float> MCL_gpu();
     std::tuple<float, float, float> MCL_hybrid();
-    void gpu_update(int N_gpu);
+    void gpu_update();
     void cpu_update();
     void t_cpu_update(int start, int num_particles, int num_threads);
     void MCL_adaptive();
@@ -248,12 +250,18 @@ private:
      * each thread, i.e. the start index and the total number of particles.
      */
     std::vector<std::thread> cpu_workers_;
-    std::condition_variable cv_;
-    int ready_ {0};
+    std::condition_variable cv_cpu_;
+    int ready_cpu_ {0};
     int item_ {0};
-    std::mutex cv_mtx_;
-    std::unordered_map<pthread_t, int> worker_start_map_;
-    std::unordered_map<pthread_t, int> worker_n_map_;
+    std::mutex cv_cpu_mtx_;
+    std::unordered_map<pthread_t, int> cpu_worker_start_map_;
+    std::unordered_map<pthread_t, int> cpu_worker_n_map_;
+    /* Variables used by the sync mechanism for the gpu thread */
+    std::thread gpu_worker_;
+    std::condition_variable cv_gpu_;
+    std::mutex cv_gpu_mtx_;
+    int ready_gpu_ {0};
+    int *num_particles_gpu_;
 
     /* flag to control whether to perform resampling */
     int do_res_{0};

@@ -103,6 +103,25 @@ int main(int argc, char** argv)
                 mcl.update();
                 r.sleep();
             }
+            /*
+             * The cleanup() function calls notify_all() on both cpu cv and gpu cv.
+             *
+             * @note
+             *
+             * Why we need to do that?
+             *
+             * When SIGINT is received, it is possible that the main thread just
+             * finishes one iteration, i.e. after mcl.update() returns and before
+             * entering the next iteration. At this moment, all worker threads,
+             * both cpu workers and the gpu worker, can be waiting on their
+             * corresponding cv. Although they check if ros::ok() is true,
+             * they will not wake up if no one notify them. However, the main
+             * thread has exited the while loop. Therefore, we have to notify
+             * all sleeping workers. And when they wake up, they will find ros
+             * has been shutdown, and they will terminate.
+             */
+            mcl.cleanup();
+
             if (t_spin.joinable())
                 t_spin.join();
         }
