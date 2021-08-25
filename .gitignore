@@ -10,5 +10,6 @@ script/TITAN_*
 script/Jetson_*
 script/fig
 script/table
+script/result_*
 script/test*
 script/*.txt
