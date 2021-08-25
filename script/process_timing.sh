@@ -10,13 +10,13 @@ echo "Processing results in ${result_dir} and writing to ${filename}_timing.txt"
 echo "n        res     update   total     expect  MCL" > ${filename}_timing.txt
 
 
-if [[ "${result_dir}" == "GPU" ]]; then
+if [[ "${result_dir}" == "TITAN_GPU" ]]; then
     n_range=`seq 256 256 768; seq 1024 1024 10240; seq 16384 4096 122880`
-elif [[ "${result_dir}" == "GPU_jetson" ]]; then
+elif [[ "${result_dir}" == "Jetson_GPU" ]]; then
     n_range=`seq 256 256 768; seq 1024 1024 10240; seq 16384 4096 40960`
-elif [[ "${result_dir}" == "CPU_MT7" ]]; then
+elif [[ "${result_dir}" == "TITAN_CPU_MT7" ]] || [[ "${result_dir}" == "TITAN_CPU_1MT7" ]]; then
     n_range=`seq 20 20 200; seq 256 256 3072`
-elif [[ "${result_dir}" == "CPU_jetson_MT5" ]]; then
+elif [[ "${result_dir}" == "Jetson_CPU_MT5" ]] || [[ "${result_dir}" == "Jetson_CPU_1mt5" ]]; then
     n_range=`seq 20 20 200; seq 256 256 2560`
 else
     echo "${result_dir} not recognized"

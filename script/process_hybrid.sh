@@ -1,12 +1,25 @@
 #! /usr/bin/env bash
 
-DIR=hybrid_jetson
+DIR=$1
 
-echo "  n    n_cpu   res     update   total    expect  MCL" > hybrid_jetson_min_timing.txt
-echo "  n    n_cpu   res     update   total    expect  MCL" > hybrid_jetson_timing.txt
+## Convert DIR to lower case. Require bash 4.0
+dir=$(echo "${DIR,,}")
 
+min_timing_file=${dir}_min_timing.txt
+timing_file=${dir}_timing.txt
 
-for n in `seq 1024 1024 10240; seq 12288 4096 40960`
+echo "Processing results in ${DIR} and writing to ${min_timing_file} and ${timing_file}"
+
+echo "  n    n_cpu   res     update   total    expect  MCL" > ${min_timing_file}
+echo "  n    n_cpu   res     update   total    expect  MCL" > ${timing_file}
+
+if [[ "${DIR}" == "TITAN_hybrid_1mt" ]]; then
+    n_range=`seq 1024 1024 10240; seq 12288 4096 122880`
+elif [[ "${DIR}" == "jetson_hybrid_1mt" ]]; then
+    n_range=`seq 1024 1024 10240; seq 12288 4096 40960`
+fi
+
+for n in ${n_range}
 do
     min_MCL=20.0
     min_res=0
@@ -14,7 +27,7 @@ do
     min_total=0
     min_expect=0
     min_cpu=0
-    for n_cpu in `seq 256 256 2048`
+    for n_cpu in `seq 256 256 1536`
     do
         if (( $(echo "${n_cpu} <= ($n / 2)") )); then
             n_gpu=$(echo "$n - ${n_cpu}" | bc -l)
@@ -53,7 +66,7 @@ do
             expect=$(echo "$acc_expect / $cnt" | bc -l)
             MCL=$(echo "$acc_MCL / $cnt" | bc -l)
 
-            printf "%6d  %4d  %7.4f  %7.4f  %7.4f  %7.4f %7.4f\n" $n ${n_cpu} ${res}  ${update}  ${total}  ${expect}  ${MCL} >> hybrid_jetson_timing.txt
+            printf "%6d  %4d  %7.4f  %7.4f  %7.4f  %7.4f %7.4f\n" $n ${n_cpu} ${res}  ${update}  ${total}  ${expect}  ${MCL} >> ${timing_file}
 
             ##
             ## Save the min MCL value
@@ -68,5 +81,5 @@ do
             fi
         fi
     done
-    printf "%6d  %4d  %7.4f  %7.4f  %7.4f  %7.4f %7.4f\n" $n ${min_cpu} ${min_res}  ${min_update}  ${min_total}  ${min_expect}  ${min_MCL} >> hybrid_jetson_min_timing.txt
+    printf "%6d  %4d  %7.4f  %7.4f  %7.4f  %7.4f %7.4f\n" $n ${min_cpu} ${min_res}  ${min_update}  ${min_total}  ${min_expect}  ${min_MCL} >> ${min_timing_file}
 done
