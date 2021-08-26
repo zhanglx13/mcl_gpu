@@ -125,7 +125,7 @@ MCL::MCL(ranges::OMap omap, float max_range_px):
      */
     if (!p_which_impl_.compare("gpu") || !p_which_impl_.compare("hybrid"))
     {
-        mclgpu_ = new MCLGPU(p_max_particles_);
+        mclgpu_ = new MCLGPU(p_max_particles_,3);
         mclgpu_->init_constants(
             /* motion model dispersion constants */
             p_motion_dispersion_x_, p_motion_dispersion_y_, p_motion_dispersion_theta_,
@@ -204,12 +204,13 @@ void MCL::initialize_mt()
      * set the policy and priority of the main thread
      * so that the created threads will inherit the scheduling policy and priority
      */
-    sched_param sch;
-    ROS_DEBUG("max priority of FIFO: %d",  sched_get_priority_max(SCHED_FIFO));
-    //sch.sched_priority = sched_get_priority_max(SCHED_FIFO) - 1;
-    sch.sched_priority = 50;
-    if ( pthread_setschedparam(pthread_self(), SCHED_FIFO, &sch) )
-        std::cout << "setschedparam failed: " << std::strerror(errno) << '\n';
+    // sched_param sch;
+    // ROS_DEBUG("max priority of FIFO: %d",  sched_get_priority_max(SCHED_FIFO));
+    // sch.sched_priority = sched_get_priority_max(SCHED_FIFO) - 1;
+    // sch.sched_priority = 50;
+    // if ( pthread_setschedparam(pthread_self(), SCHED_FIFO, &sch) )
+    //     std::cout << "setschedparam failed: " << std::strerror(errno) << '\n';
+
     /* cpu topology of the TITAN machine
     ┌────────────────────────────────────────────────────────────────────────┐
     │ Machine (7872MB)                                                       │
@@ -289,6 +290,11 @@ MCL::~MCL()
         std::cout<<"Joining gpu thread " << gpu_worker_.native_handle() << "\n";
         gpu_worker_.join();
     }
+    /* delete pointers of GPU classes */
+    if (!p_which_impl_.compare("gpu") || !p_which_impl_.compare("hybrid"))
+        delete mclgpu_;
+    if (!p_which_res_.compare("gpu"))
+        delete resgpu_;
     std::cout<< "All done, bye yo!!" << "\n";
 }
 
@@ -615,10 +621,8 @@ void MCL::initialize_initpose(int startover)
     seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::generate_n(particles_angle_.begin(), p_max_particles_,
                     [angle=init_pose_[2],
-                     //distribution = std::normal_distribution<float>(0.0, 4),
                      distribution = std::uniform_real_distribution<float>(0, 1),
                      generator = std::default_random_engine(seed)] () mutable
-                    //{return angle + distribution(generator);});
                         {return 2.0 * M_PI *  distribution(generator);});
     double w = 1.0 / p_max_particles_;
     std::fill(weights_.begin(), weights_.end(), w);
@@ -674,7 +678,6 @@ void MCL::update()
         //publish_tf();
 
         /* seconds per iteration */
-        // ros::Duration spi = t2 - t1;
         auto MCL_t = (t2 - t0).toSec()*1000.0;
         auto expect_t = (t2 - t1).toSec()*1000.0;
 
@@ -967,11 +970,6 @@ std::tuple<float, float, float> MCL::MCL_cpu()
 
     auto t2 = ros::Time::now();
 
-    /*********************************************
-     * Step 4: normalize the weights_  (but why?)
-     *********************************************/
-    // double maxW = normalize_weight();
-
     auto res_t = (t1 - t0).toSec()*1000.0;
     auto update_t = (t2 - t1).toSec()*1000.0;
     auto total_t = (t2 - t0).toSec()*1000.0;
@@ -1007,10 +1005,6 @@ std::tuple<float, float, float> MCL::MCL_gpu()
         weights_.data(), p_max_particles_);
 
     auto t2 = ros::Time::now();
-    /*********************************
-     * Step 3: normalize the weights
-     *********************************/
-    // double maxW = normalize_weight();
 
     auto res_t = (t1 - t0).toSec()*1000.0;
     auto update_t = (t2 - t1).toSec()*1000.0;
@@ -1045,13 +1039,10 @@ void MCL::gpu_update()
     while(1){
         /* First check if main thread has set the parameters */
         {
-            // std::cout<< iter_ <<  ": GPU thread is waiting for cv ready_gpu_ = " << ready_gpu_ << "\n";
             std::unique_lock<std::mutex> workerLk (cv_gpu_mtx_);
             cv_gpu_.wait(workerLk, [this]{return ready_gpu_ == 1 || !ros::ok();});
-            // std::cout<< iter_ <<  ": GPU thread is ready to go  ready_gpu_ = " << ready_gpu_ << "\n";
         }
         if (!ros::ok()) {
-            // std::cout<< iter_ << ": GPU thread wakes up because ROS is shutdown\n";
             /*
              * We need to notify the main thread for the same reason as we did
              * in cpu_update()
@@ -1076,7 +1067,6 @@ void MCL::gpu_update()
         {
             std::lock_guard<std::mutex> workerLk (cv_gpu_mtx_);
             ready_gpu_ = 0;
-            // std::cout << iter_ << ": GPU thread finished  ready_gpu_ = " << ready_gpu_ << "\n";
         }
         cv_gpu_.notify_all();
     }
@@ -1127,20 +1117,9 @@ void MCL::cpu_update()
     /* The worker thread never terminates unless ros::ok() == false */
     while(1){
         {
-            // std::cout<< "@@@iter "<< iter_ << ": cpu thread "<< pthread_self();
-            // std::cout<< " waiting for cv\n";
             std::unique_lock<std::mutex> workerLk (cv_cpu_mtx_);
             cv_cpu_.wait(workerLk, [this, iter_old]{
                 return (ready_cpu_ == 1 && iter_ != iter_old) || !ros::ok();});
-            // std::cout<< "@@@iter "<< iter_ << ": thread "<< pthread_self();
-            // std::cout<< " has started ==> ready_cpu_ = " << ready_cpu_ <<" item_ = " << item_;
-            // std::cout<< " on cpu " << sched_getcpu();
-            // if (!ros::ok()){
-            //     std::cout<< " ==> ros not OK!!! I am going to terminate!\n";
-            // }
-            // else
-            //     std::cout<<"\n";
-            // fflush(stdout);
         }
         if (!ros::ok()){
             /*
@@ -1173,14 +1152,10 @@ void MCL::cpu_update()
         {
             std::lock_guard<std::mutex> workerLk (cv_cpu_mtx_);
             item_ --;
-            // std::cout<< "@@@iter "<< iter_ << ": thread "<< pthread_self();
-            // std::cout<< " has finished ready_ = " << ready_cpu_ << " item = "<< item_;
             if (item_ == 0){
                 isLast = 1;
                 ready_cpu_ = 0;
             }
-            // std::cout<< "\n";
-            // fflush(stdout);
         }
         iter_old = iter_;
         if (isLast)
@@ -1217,8 +1192,6 @@ void MCL::t_cpu_update(int start, int num_particles, int num_threads)
         std::lock_guard<std::mutex> mainLk (cv_cpu_mtx_);
         item_ = cpu_workers_.size();
         ready_cpu_ = 1;
-        // printf("@@@iter %d: Main thread set ready_ = %d  item_ = %d\n", iter_, ready_cpu_, item_);
-        // fflush(stdout);
     }
     cv_cpu_.notify_all();
 
@@ -1240,9 +1213,6 @@ void MCL::t_cpu_update(int start, int num_particles, int num_threads)
          *   out item_ is 0. Either way, the main thread can terminate.
          */
         cv_cpu_.wait(mainLk, [this] { return item_ == 0 || !ros::ok();});
-        // std::cout << iter_ <<": Main thread sync with cpu threads ready_cpu_ = "<< ready_gpu_ << "\n";
-        // std::cout << "@@@iter " << iter_ << ": main thread synced with all workers\n";
-        // fflush(stdout);
     }
 }
 
@@ -1278,7 +1248,6 @@ std::tuple<float, float, float> MCL::MCL_hybrid()
         std::lock_guard<std::mutex> mainLk (cv_gpu_mtx_);
         *num_particles_gpu_ = particle_partition();
         ready_gpu_ = 1;
-        // std::cout << "Main thread is starting!!!\n";
     }
     cv_gpu_.notify_all();
 
@@ -1309,7 +1278,6 @@ std::tuple<float, float, float> MCL::MCL_hybrid()
          *   thread. Therefore, the main thread can terminate.
          */
         cv_gpu_.wait(mainLk, [this]{return ready_gpu_ == 0 || !ros::ok();});
-        // std::cout << iter_ <<": Main thread sync with gpu thread ready_gpu_ = "<< ready_gpu_ << "\n";
     }
     auto t2 = ros::Time::now();
 

@@ -8,8 +8,7 @@
 class MCLGPU
 {
 public:
-    MCLGPU(int num_particles);
-    MCLGPU(){printf("Default constructor of MCLGPU called\n");}
+    MCLGPU(int num_particles, int sdim);
     ~MCLGPU();
 
     void init_constants(float motion_dispersion_x,
@@ -24,6 +23,7 @@ public:
     void set_map(ranges::OMap omap, float max_range);
 protected:
     int np_; // number of particles
+    int sdim_; // dimension of the state
     float *d_particles_;
     double *d_weights_;
     float *d_odom_delta_;

@@ -187,14 +187,14 @@ __global__ void cuda_motion_sensor_model(
     states[p] = localState;
 }
 
-MCLGPU::MCLGPU(int num_particles): np_(num_particles)
+MCLGPU::MCLGPU(int num_particles, int sdim): np_(num_particles), sdim_(sdim)
 {
     /* Allocated device space */
-    checkCUDAError(cudaMalloc((void**)&d_particles_, sizeof(float)*np_*3));
+    checkCUDAError(cudaMalloc((void**)&d_particles_, sizeof(float)*np_*sdim_));
     checkCUDAError(cudaMalloc((void**)&d_weights_, sizeof(double)*np_));
 
     /* Allocate device space for odometry_delta */
-    checkCUDAError(cudaMalloc((void**)&d_odom_delta_, sizeof(float)*3));
+    checkCUDAError(cudaMalloc((void**)&d_odom_delta_, sizeof(float)*sdim_));
 
     /*Allocate device space for obs */
     checkCUDAError(cudaMalloc((void**)&d_obs_, sizeof(float)*NUM_ANGLES));
@@ -210,6 +210,9 @@ MCLGPU::~MCLGPU()
 {
     checkCUDAError(cudaFree(d_particles_));
     checkCUDAError(cudaFree(d_weights_));
+    checkCUDAError(cudaFree(d_odom_delta_));
+    checkCUDAError(cudaFree(d_obs_));
+    checkCUDAError(cudaFree(d_states_));
 }
 
 void MCLGPU::set_angles(float *angles)
@@ -252,7 +255,7 @@ void MCLGPU::update(float *px, float *py, float *pangle,
     checkCUDAError(cudaMemcpy(d_particles_+np_*2, pangle, sizeof(float)*N, cudaMemcpyHostToDevice));
 
     /* copy odometry delta from host to device */
-    checkCUDAError(cudaMemcpy(d_odom_delta_, odometry_delta, sizeof(float)*3, cudaMemcpyHostToDevice));
+    checkCUDAError(cudaMemcpy(d_odom_delta_, odometry_delta, sizeof(float)*sdim_, cudaMemcpyHostToDevice));
     /* copy observations from host to device */
     checkCUDAError(cudaMemcpy(d_obs_, obs, sizeof(float)*num_angles, cudaMemcpyHostToDevice));
 
