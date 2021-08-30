@@ -123,6 +123,7 @@
     -->
     <param name="init_var" value="$(arg init_var)"/>
     <param name="cpu_threads" value="$(arg cpu_threads)"/>
+    <param name="which_res" value="$(arg which_res)"/>
 
   </node>
 </launch>
