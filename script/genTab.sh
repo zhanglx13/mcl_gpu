@@ -8,9 +8,10 @@ gnuplot -e "col=10" process.gp
 gnuplot -e "col=12" process.gp
 
 # table for n iter time
-for arch in GPU
+for archX in Jetson_CPU_MT
 do
-echo "Generating table/${arch}_time.txt"
+    arch=$(echo "${archX,,}")
+    echo "Generating table/${arch}_time.txt"
     rm -f table/${arch}_time.txt
     for result in $arch/*
     do
@@ -22,11 +23,11 @@ echo "Generating table/${arch}_time.txt"
         IFS='_' read -ra item <<< "$IN"
         n=${item[0]}
         var=${item[1]}
-        #mt=${item[2]}
-        run=${item[2]}
+        mt=${item[2]}
+        run=${item[3]}
         lastL=$(tail -n 1 $result | awk '{print $2, $4}')
-        #echo "$n  $var  $mt  $run  $lastL" >> table/${arch}_time.txt
-        echo "$n  $var   $run  $lastL" >> table/${arch}_time.txt
+        echo "$n  $var  $mt  $run  $lastL" >> table/${arch}_time.txt
+        #echo "$n  $var   $run  $lastL" >> table/${arch}_time.txt
     done
 done
 

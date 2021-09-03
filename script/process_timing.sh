@@ -18,6 +18,8 @@ elif [[ "${result_dir}" == "TITAN_CPU_MT7" ]] || [[ "${result_dir}" == "TITAN_CP
     n_range=`seq 20 20 200; seq 256 256 3072`
 elif [[ "${result_dir}" == "Jetson_CPU_MT5" ]] || [[ "${result_dir}" == "Jetson_CPU_1mt5" ]]; then
     n_range=`seq 20 20 200; seq 256 256 2560`
+elif [[ "${result_dir}" == "Jetson_CPU_MT" ]]; then
+    n_range=$(echo "256 512 1024 1536 2048 2560 3072")
 else
     echo "${result_dir} not recognized"
     exit
