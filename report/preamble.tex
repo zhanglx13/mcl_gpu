@@ -1,0 +1,142 @@
+\documentclass[conference]{IEEEtran}
+
+\usepackage{cite}
+\ifCLASSINFOpdf
+\usepackage[pdftex]{graphicx}
+\graphicspath{{../script/fig/}{./figures/}}
+\DeclareGraphicsExtensions{.pdf,.jpeg,.png, .jpg, .PNG}
+\else
+\fi
+\usepackage{amsmath,bm}
+\interdisplaylinepenalty=2500
+\ifCLASSOPTIONcompsoc
+\usepackage[caption=false,font=normalsize,labelfont=sf,textfont=sf]{subfig}
+\else
+\usepackage[caption=false,font=footnotesize]{subfig}
+\fi
+\usepackage{url}
+\usepackage{amsfonts} % for \mathbb{}
+\usepackage{listings} % For writing math in verbatim
+\usepackage{enumerate}
+
+\usepackage[showlabels,sections,floats,textmath,displaymath]{preview}
+\usepackage{amssymb} %% For showing special symbols like \bigstar
+\usepackage{pifont}  %% For showing circled numbers
+\usepackage{array}
+%\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{ifthen}
+\usepackage{dirtree}
+%\setlength{\DTbaselineskip}{13pt}
+%\renewcommand*\DTstyle{}
+%\DTsetlength{.2em}{1em}{.2em}{.4pt}{2pt}
+
+\newcommand{\mathnew}{\mathit} 
+% for nice reference 
+\newcommand{\fsp}{{\;}}
+\newcommand{\Fig}{\figurename \fsp}
+\newcommand{\Sec}{Sec.\fsp}
+\newcommand{\Eq}{Eq.\fsp}
+\newcommand{\Tab}{Tab.\fsp}
+\newcommand{\Alg}{Alg.\fsp}
+
+\DeclareMathOperator*{\argminB}{argmin} 
+
+\hyphenation{temperature} % correct bad hyphenation here
+
+\usepackage{tikz}
+\usetikzlibrary{arrows}
+\usetikzlibrary{intersections}
+\usetikzlibrary{calc, quotes}
+\usetikzlibrary{external}
+\tikzexternalize[prefix=tikz_figures/]%
+\pgfdeclarelayer{bg}    % declare background layer
+\pgfsetlayers{bg,main} % set the order of the layers (main is the standard layer)
+\usetikzlibrary{patterns}
+
+\newcommand{\etal}{\textit{et al}. }
+\newcommand{\ie}{\textit{i}.\textit{e}. }
+\newcommand{\eg}{\textit{e}.\textit{g}. }
+
+%%
+%% Check this post for how to write properly-sized ceiling operator
+%% https://tex.stackexchange.com/a/367035/172530
+%%
+\usepackage{mathtools}
+\DeclarePairedDelimiter{\ceil}{\lceil}{\rceil}
+
+%% For text color
+\usepackage{xcolor}
+
+%% For drawing boxes around text
+%% https://tex.stackexchange.com/a/234195/172530
+\newcommand\textbox[2]{%
+  \tikz[baseline]\node[%
+  inner ysep=0pt, 
+  inner xsep=2pt, 
+  anchor=text, 
+  rectangle, 
+  rounded corners=1mm,
+  #1] {\strut#2};%
+}
+
+%% package for highlighting text
+%% Usage: \hl{text to be highlighted}
+\usepackage{soul}
+\sethlcolor{yellow}
+
+%% underlining for emphasis
+%% Examples:
+%% \uline{important} underline
+%% \uuline{urgent} double-underline
+%% \uwave{boat} wavy underline like
+%% \sout{wrong} line struck through word
+%% \xout{removed} removed
+%% \dashuline{dashing} dashed
+%% \dotuline{dotty} dotted
+\usepackage[normalem]{ulem}
+
+%% define a red check mark
+\newcommand\redcheck{
+  {\textcolor{red}{\ding{52}}}
+}
+
+\usepackage{dblfloatfix}    % To enable figures at the bottom of page
+
+\usepackage{wrapfig}
+\usepackage{siunitx}
+
+% Overlay question mark on equal mark
+\def\qeq{\mathrel{%
+    \mathchoice{\QEQ}{\QEQ}{\scriptsize\QEQ}{\tiny\QEQ}%
+}}
+\def\QEQ{{%
+    \setbox0\hbox{=}%
+    \rlap{\hbox to \wd0{\hss?\hss}}\box0
+  }}
+
+
+%% Enabling this package will automatically align the text in the two columns vertically
+%\usepackage{widetext}
+
+
+%% https://tex.stackexchange.com/questions/2441/how-to-add-a-forced-line-break-inside-a-table-cell
+\usepackage{makecell} %% For breaking lines in table cells
+
+\usepackage{amsthm}
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+
+\theoremstyle{proposition}
+\newtheorem{proposition}{Proposition}
+
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+%% It is tricky to use the algorithm2e package in the ieeetran document
+%% Check this post for tweaks
+%% https://tex.stackexchange.com/a/147625
+\usepackage[ruled,norelsize,linesnumbered, vlined, longend]{algorithm2e}
+\makeatletter
+\newcommand{\removelatexerror}{\let\@latex@error\@gobble}
+\makeatother
