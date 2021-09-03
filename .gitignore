@@ -13,3 +13,12 @@ script/table
 script/result_*
 script/test*
 script/*.txt
+lit
+report/*.aux
+report/*.auxlock
+report/*.bbl
+report/*.blg
+report/*.log
+report/*.pdf
+report/auto
+report/figures
