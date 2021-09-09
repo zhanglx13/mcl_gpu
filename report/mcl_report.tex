@@ -117,11 +117,11 @@ The results are shown in \Fig \ref{fig:maxW}.
 
 \begin{figure}[!h]
   \subfloat[Effect of number of particles]{
-    \centering \includegraphics[width=.47\linewidth]{averaged_maxW}
+    \centering \includegraphics[width=\linewidth]{averaged_maxW}
     \label{fig:averaged_maxW}}
   \hfil
   \subfloat[Effect of init pose confidence]{
-    \centering \includegraphics[width=.47\linewidth]{maxW_error}
+    \centering \includegraphics[width=\linewidth]{maxW_error}
     \label{fig:maxW_error}}
   \caption{Localization accuracy with difference configurations.
     A black horizontal line at maxW=18.5 is drawn as the threshold above which the
@@ -218,11 +218,11 @@ is robust regardless of the confidence level of the initial particles.
 
 \begin{figure}[!h]
   \subfloat[Self-built machine]{
-    \centering \includegraphics[width=.47\linewidth]{TITAN_MT_time}
+    \centering \includegraphics[width=\linewidth]{TITAN_MT_time}
     \label{fig:titan_mt_time}}
   \hfil
   \subfloat[Jetson TX2]{
-    \centering \includegraphics[width=.47\linewidth]{jetson_MT_time}
+    \centering \includegraphics[width=\linewidth]{jetson_MT_time}
     \label{fig:jetson_mt_time}}
   \caption{Elapsed time per MCL iteration with different implementations.
     The black horizontal line refers to the message processing deadline of
@@ -246,11 +246,11 @@ The same behavior can be observed on both the self-built machine
 
 \begin{figure}[!h]
   \subfloat[Self-built machine]{
-    \centering \includegraphics[width=.47\linewidth]{TITAN_component_timing}
+    \centering \includegraphics[width=.8\linewidth]{TITAN_component_timing}
     \label{fig:titan_component_timing}}
   \hfil
   \subfloat[Jetson TX2]{
-    \centering \includegraphics[width=.47\linewidth]{jetson_component_timing}
+    \centering \includegraphics[width=.8\linewidth]{jetson_component_timing}
     \label{fig:jetson_component_timing}}
   \caption{Elapsed time of each component of MCL with different implementations.
     (a) mt=7 (b) mt=5}
@@ -264,11 +264,11 @@ which includes \texttt{motion\_model} and \texttt{sensor\_model}.
 
 \begin{figure}[!h]
   \subfloat[Self-built machine]{
-    \centering \includegraphics[width=.47\linewidth]{TITAN_hybrid_timing}
+    \centering \includegraphics[width=.8\linewidth]{TITAN_hybrid_timing}
     \label{fig:titan_hybrid_timing}}
   \hfil
   \subfloat[Jetson TX2]{
-    \centering \includegraphics[width=.47\linewidth]{jetson_hybrid_timing}
+    \centering \includegraphics[width=.8\linewidth]{jetson_hybrid_timing}
     \label{fig:jetson_hybrid_timing}}
   \caption{Elapsed time of the \texttt{update} part of MCL by the hybrid implementation.
     For each n, different combinations of $\text{n}_c$ and $\text{n}_g$ are used
