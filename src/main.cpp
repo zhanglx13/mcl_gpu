@@ -5,9 +5,22 @@
 #include "mcl.h"
 #include "nav_msgs/GetMap.h"
 
+#include "gpu_workload.h"
+
 void spin_thread()
 {
     ros::spin();
+}
+
+void gpu_workload(int load)
+{
+    GPU_Workload g_work(load);
+    ROS_INFO("Dummy Kernel is running with load = %d", load);
+    //ros::Rate r(100);
+    while (ros::ok()) {
+        g_work.callKernel();
+        //r.sleep();
+    }
 }
 
 int main(int argc, char** argv)
@@ -38,7 +51,10 @@ int main(int argc, char** argv)
         ROS_ERROR("max_particles must be a multiple of %d", NUM_THREADS);
         ros::shutdown();
     }
-    float max_range;
+
+    /* get the load for the other dummy gpu workload */
+    int load;
+    private_nh.getParam("load", load);
     /*
       @note
      * max_range is the maximum range in meters that Lidar can measure.
@@ -46,6 +62,7 @@ int main(int argc, char** argv)
      * max_range/omap.world_scale
      * max_range_px + 1 will be used as the width of the sensor table.
      */
+    float max_range;
     private_nh.param("max_range", max_range, 30.0f);
     ROS_INFO("Getting OMap object from map server!!");
     /* get OccupancyGrid map from the map_server's /static_map service */
@@ -96,6 +113,7 @@ int main(int argc, char** argv)
 
             /* spawn another thread to handle callbacks */
             std::thread t_spin(spin_thread);
+            std::thread t_gpu_dummy_workload(gpu_workload, 1792);
 
             ros::Rate r(100); // 100 Hz
             while (ros::ok())
@@ -124,6 +142,8 @@ int main(int argc, char** argv)
 
             if (t_spin.joinable())
                 t_spin.join();
+            if (t_gpu_dummy_workload.joinable())
+                t_gpu_dummy_workload.join();
         }
         else
         {

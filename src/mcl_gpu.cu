@@ -258,6 +258,7 @@ void MCLGPU::update(float *px, float *py, float *pangle,
     checkCUDAError(cudaMemcpy(d_odom_delta_, odometry_delta, sizeof(float)*sdim_, cudaMemcpyHostToDevice));
     /* copy observations from host to device */
     checkCUDAError(cudaMemcpy(d_obs_, obs, sizeof(float)*num_angles, cudaMemcpyHostToDevice));
+    cudaStreamSynchronize(cudaStreamPerThread);
 
     int blocks = np_/NUM_THREADS;
     int rem = np_ - NUM_THREADS * blocks;
@@ -279,6 +280,7 @@ void MCLGPU::update(float *px, float *py, float *pangle,
     checkCUDAError(cudaMemcpy(px, d_particles_, sizeof(float)*N, cudaMemcpyDeviceToHost));
     checkCUDAError(cudaMemcpy(py, d_particles_+np_, sizeof(float)*N, cudaMemcpyDeviceToHost));
     checkCUDAError(cudaMemcpy(pangle, d_particles_+np_*2, sizeof(float)*N, cudaMemcpyDeviceToHost));
+    cudaStreamSynchronize(cudaStreamPerThread);
 }
 
 void MCLGPU::set_sensor_table(double *sensorTable, int t_w)
@@ -287,6 +289,7 @@ void MCLGPU::set_sensor_table(double *sensorTable, int t_w)
     int table_size = sizeof(double) * table_width_ * table_width_;
     checkCUDAError(cudaMalloc((void**)&d_sensorTable_, table_size));
     checkCUDAError(cudaMemcpy(d_sensorTable_, sensorTable, table_size, cudaMemcpyHostToDevice));
+    cudaStreamSynchronize(cudaStreamPerThread);
 }
 
 void MCLGPU::set_map(ranges::OMap omap, float max_range)
@@ -311,5 +314,6 @@ void MCLGPU::set_map(ranges::OMap omap, float max_range)
 
     checkCUDAError(cudaMalloc((void**)&d_distMap_, width_*height_*sizeof(float)));
     checkCUDAError(cudaMemcpy(d_distMap_, raw_grid, width_*height_*sizeof(float), cudaMemcpyHostToDevice));
+    cudaStreamSynchronize(cudaStreamPerThread);
     free(raw_grid);
 }

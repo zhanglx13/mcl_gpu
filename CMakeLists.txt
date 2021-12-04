@@ -206,7 +206,7 @@ if (WITH_CUDA)
   ## - https://answers.ros.org/question/304782/compile-cuda-into-ros-code-in-tegra/
   ##
   find_package(CUDA REQUIRED)
-  SET(CUDA_NVCC_FLAGS "-arch=sm_35" CACHE STRING "nvcc flags" FORCE)
+  SET(CUDA_NVCC_FLAGS "-arch=sm_35 --default-stream per-thread" CACHE STRING "nvcc flags" FORCE)
   SET(CUDA_VERBOSE_BUILD ON CACHE BOOL "nvcc verbose" FORCE)
   SET(LIB_TYPE STATIC)
   CUDA_ADD_LIBRARY(cudaRMLib ${LIB_TYPE}
@@ -223,7 +223,11 @@ if (WITH_CUDA)
     src/scanFan_no_mm.cu
     src/scan_kernel.cu)
 
+  CUDA_ADD_LIBRARY(cudaDummyKernel ${LIB_TYPE}
+    src/gpu_workload.cu)
+
   add_executable(mcl_gpu ${SRCS})
+
 
   target_link_libraries(cudaResLib cudaScanLib)
 
@@ -232,6 +236,7 @@ if (WITH_CUDA)
     cudaRMLib
     cudaMCLLib
     cudaResLib
+    cudaDummyKernel
     )
 
   add_dependencies(mcl_gpu
@@ -240,7 +245,20 @@ if (WITH_CUDA)
     cudaRMLib
     cudaMCLLib
     cudaResLib
+    cudaDummyKernel
     )
+
+  add_executable(dummy src/gpu_workload.cpp)
+
+  target_link_libraries(dummy
+    ${catkin_LIBRARIES}
+    cudaDummyKernel)
+
+  add_dependencies(dummy
+    ${${PROJECT_NAME}_EXPORTED_TARGETS}
+    ${catkin_EXPORTED_TARGETS}
+    cudaDummyKernel)
+
 else()
   add_definitions(-DUSE_CUDA=0)
 
